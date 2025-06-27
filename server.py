@@ -50,7 +50,6 @@ class GameSession:
         values = [f"card_{i}" for i in range(pairs)]
         all_cards = values + values
         random.shuffle(all_cards)
-        
         self.cards = [Card(i, value) for i, value in enumerate(all_cards)]
     
     def add_player(self, player: Player) -> bool:
@@ -88,25 +87,31 @@ class GameSession:
                 self.players[player_id].score += 1
                 result["match"] = True
                 result["continue_turn"] = True
+                self.revealed_cards = []
             else:
                 result["match"] = False
                 result["continue_turn"] = False
-                for c in self.revealed_cards:
-                    c.is_revealed = False
+                revealed_copy = list(self.revealed_cards)
+                self.revealed_cards = []
                 self.switch_turn()
-            
-            self.revealed_cards = []
-            
+
+                def hide_cards_later():
+                    time.sleep(0.5)
+                    for c in revealed_copy:
+                        c.is_revealed = False
+                    self.broadcast_game_update()
+
+                threading.Thread(target=hide_cards_later, daemon=True).start()
+        
             if all(card.is_matched for card in self.cards):
                 self.finish_game()
         
         self.last_activity = datetime.now()
         return result
-    
+
     def switch_turn(self):
         current_player = self.players[self.current_player_id]
         current_player.is_turn = False
-        
         other_player_id = [pid for pid in self.players.keys() if pid != self.current_player_id][0]
         self.current_player_id = other_player_id
         self.players[other_player_id].is_turn = True
@@ -138,6 +143,21 @@ class GameSession:
             ],
             "current_player": self.current_player_id
         }
+
+    def broadcast_game_update(self):
+        game_state = self.get_game_state()
+        message = {
+            "type": "game_update",
+            "result": {
+                "update": "cards_hidden_after_mismatch"
+            },
+            "game_state": game_state
+        }
+        for player in self.players.values():
+            try:
+                GameServer.send_message_static(player.socket, message)
+            except Exception as e:
+                logger.error(f"Error sending update to player {player.id}: {e}")
 
 class GameServer:
     def __init__(self, host='localhost', port=8888):
@@ -245,6 +265,14 @@ class GameServer:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
     
+    @staticmethod
+    def send_message_static(client_socket, message: Dict):
+        try:
+            json_message = json.dumps(message)
+            client_socket.send(f"{json_message}\n".encode())
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+    
     def handle_client(self, client_socket, client_address):
         player_id = str(uuid.uuid4())
         logger.info(f"New client connected: {client_address} (ID: {player_id})")
@@ -254,7 +282,6 @@ class GameServer:
                 data = client_socket.recv(1024).decode().strip()
                 if not data:
                     break
-                
                 try:
                     message = json.loads(data)
                     response = self.handle_client_message(client_socket, player_id, message)
@@ -299,29 +326,12 @@ class GameServer:
                 )
                 client_thread.daemon = True
                 client_thread.start()
-                
         except KeyboardInterrupt:
             logger.info("Server shutting down...")
         finally:
             self.running = False
             server_socket.close()
             self.executor.shutdown(wait=True)
-
-class LoadBalancer:
-    def __init__(self, servers: List[Tuple[str, int]]):
-        self.servers = servers
-        self.current = 0
-        self.server_loads = {f"{host}:{port}": 0 for host, port in servers}
-    
-    def get_next_server(self) -> Tuple[str, int]:
-        server = self.servers[self.current]
-        self.current = (self.current + 1) % len(self.servers)
-        return server
-    
-    def get_least_loaded_server(self) -> Tuple[str, int]:
-        min_load_server = min(self.server_loads.items(), key=lambda x: x[1])
-        host, port = min_load_server[0].split(':')
-        return (host, int(port))
 
 def main():    
     import argparse
