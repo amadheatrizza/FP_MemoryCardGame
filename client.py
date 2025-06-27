@@ -102,6 +102,14 @@ class Card:
         self.rect = pygame.Rect(x, y, width, height)
         
         self.colors = {
+            'card_0': (255, 100, 100),  # Red
+            'card_1': (100, 255, 100),  # Green
+            'card_2': (100, 100, 255),  # Blue
+            'card_3': (255, 255, 100),  # Yellow
+            'card_4': (255, 100, 255),  # Magenta
+            'card_5': (100, 255, 255),  # Cyan
+            'card_6': (255, 150, 100),  # Orange
+            'card_7': (150, 100, 255),  # Purple
         }
     
     def update(self, card_data: Dict):
@@ -245,7 +253,7 @@ class MemoryCardGame:
         self.status_message = message
         self.status_timer = duration
     
-    def create_cards_grid(self, num_cards: int = 20):
+    def create_cards_grid(self, num_cards: int = 16):
         self.cards.clear()
         
         cols = 4
@@ -339,7 +347,6 @@ class MemoryCardGame:
                 if self.connect_to_server():
                     self.client.send_message({'action': 'create_room', 'player_name': 'Player'})
                     self.state = GameState.WAITING
-            
             
             elif self.join_room_btn.is_clicked(pos):
                 room_id = self.room_input.text.strip()

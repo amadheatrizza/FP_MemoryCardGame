@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import uuid
+import string
 import random
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -9,7 +10,6 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 import logging
-import string
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -323,8 +323,7 @@ class LoadBalancer:
         host, port = min_load_server[0].split(':')
         return (host, int(port))
 
-def main():
-    
+def main():    
     import argparse
     parser = argparse.ArgumentParser(description='Memory Card Game Server')
     parser.add_argument('--host', default='localhost', help='Server host')
