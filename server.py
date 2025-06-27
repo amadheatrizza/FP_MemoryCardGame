@@ -144,6 +144,7 @@ class GameServer:
         self.host = host
         self.port = port
         self.games: Dict[str, GameSession] = {}
+        self.client_to_game: Dict[str, str] = {}
         self.executor = ProcessPoolExecutor(max_workers=4)
         self.running = False
     
