@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,8 +35,9 @@ class Player:
         self.is_turn = False
 
 class GameSession:
-    def __init__(self, room_id: str):
+    def __init__(self, room_id: str, level: str = "normal"):
         self.room_id = room_id
+        self.level = level
         self.players: Dict[str, Player] = {}
         self.cards: List[Card] = []
         self.state = GameState.WAITING_FOR_PLAYERS
@@ -45,13 +46,13 @@ class GameSession:
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
         self.initialize_cards()
-    
+
     def initialize_cards(self, pairs=8):
         values = [f"card_{i}" for i in range(pairs)]
         all_cards = values + values
         random.shuffle(all_cards)
         self.cards = [Card(i, value) for i, value in enumerate(all_cards)]
-    
+
     def add_player(self, player: Player) -> bool:
         if len(self.players) < 2:
             self.players[player.id] = player
@@ -59,27 +60,43 @@ class GameSession:
                 self.start_game()
             return True
         return False
-    
+
     def start_game(self):
         self.state = GameState.IN_PROGRESS
         player_ids = list(self.players.keys())
         self.current_player_id = random.choice(player_ids)
         self.players[self.current_player_id].is_turn = True
-        logger.info(f"Game {self.room_id} started with players: {player_ids}")
-    
+        logger.info(f"Game {self.room_id} started with players: {player_ids} at level: {self.level}")
+
+        if self.level == "easy":
+            for card in self.cards:
+                card.is_revealed = True
+            self.broadcast_game_update()
+
+            def hide_all_cards():
+                time.sleep(3)
+                for card in self.cards:
+                    if not card.is_matched:
+                        card.is_revealed = False
+                self.broadcast_game_update()
+
+            threading.Thread(target=hide_all_cards, daemon=True).start()
+        else:
+            self.broadcast_game_update()
+
     def reveal_card(self, card_id: int, player_id: str) -> Dict:
         if self.current_player_id != player_id or self.state != GameState.IN_PROGRESS:
             return {"success": False, "message": "Not your turn"}
-        
+
         if card_id >= len(self.cards) or self.cards[card_id].is_matched or self.cards[card_id].is_revealed:
             return {"success": False, "message": "Invalid card selection"}
-        
+
         card = self.cards[card_id]
         card.is_revealed = True
         self.revealed_cards.append(card)
-        
+
         result = {"success": True, "card": {"id": card.id, "value": card.value}}
-        
+
         if len(self.revealed_cards) == 2:
             if self.revealed_cards[0].value == self.revealed_cards[1].value:
                 for c in self.revealed_cards:
@@ -102,10 +119,10 @@ class GameSession:
                     self.broadcast_game_update()
 
                 threading.Thread(target=hide_cards_later, daemon=True).start()
-        
+
             if all(card.is_matched for card in self.cards):
                 self.finish_game()
-        
+
         self.last_activity = datetime.now()
         return result
 
@@ -115,16 +132,17 @@ class GameSession:
         other_player_id = [pid for pid in self.players.keys() if pid != self.current_player_id][0]
         self.current_player_id = other_player_id
         self.players[other_player_id].is_turn = True
-    
+
     def finish_game(self):
         self.state = GameState.FINISHED
         scores = [(pid, player.score) for pid, player in self.players.items()]
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores
-    
+
     def get_game_state(self) -> Dict:
         return {
             "room_id": self.room_id,
+            "level": self.level,
             "state": self.state.value,
             "players": {
                 pid: {
@@ -167,13 +185,13 @@ class GameServer:
         self.client_to_game: Dict[str, str] = {}
         self.executor = ProcessPoolExecutor(max_workers=4)
         self.running = False
-    
-    def create_room(self) -> str:
+
+    def create_room(self, level="normal") -> str:
         room_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        self.games[room_id] = GameSession(room_id)
-        logger.info(f"Created room: {room_id}")
+        self.games[room_id] = GameSession(room_id, level=level)
+        logger.info(f"Created room: {room_id} with level: {level}")
         return room_id
-    
+
     def join_room(self, room_id: str, player: Player) -> bool:
         if room_id in self.games:
             success = self.games[room_id].add_player(player)
@@ -182,23 +200,24 @@ class GameServer:
                 logger.info(f"Player {player.id} joined room {room_id}")
             return success
         return False
-    
+
     def handle_client_message(self, client_socket, player_id: str, message: Dict):
         try:
             action = message.get('action')
             response = {"success": False, "message": "Unknown action"}
-            
+
             if action == 'create_room':
-                room_id = self.create_room()
+                level = message.get('level', 'normal')
+                room_id = self.create_room(level=level)
                 player = Player(player_id, client_socket, message.get('player_name', ''))
                 self.join_room(room_id, player)
                 response = {
-                    "success": True, 
+                    "success": True,
                     "room_id": room_id,
                     "player_id": player_id,
                     "game_state": self.games[room_id].get_game_state()
                 }
-            
+
             elif action == 'join_room':
                 room_id = message.get('room_id')
                 if room_id in self.games:
@@ -218,7 +237,7 @@ class GameServer:
                         response = {"success": False, "message": "Room is full"}
                 else:
                     response = {"success": False, "message": "Room not found"}
-            
+
             elif action == 'reveal_card':
                 room_id = self.client_to_game.get(player_id)
                 if room_id and room_id in self.games:
@@ -226,7 +245,6 @@ class GameServer:
                     result = self.games[room_id].reveal_card(card_id, player_id)
                     response = result
                     response["game_state"] = self.games[room_id].get_game_state()
-                    
                     self.broadcast_to_room(room_id, {
                         "type": "game_update",
                         "result": result,
@@ -234,7 +252,7 @@ class GameServer:
                     })
                 else:
                     response = {"success": False, "message": "Not in a game"}
-            
+
             elif action == 'get_game_state':
                 room_id = self.client_to_game.get(player_id)
                 if room_id and room_id in self.games:
@@ -242,13 +260,13 @@ class GameServer:
                         "success": True,
                         "game_state": self.games[room_id].get_game_state()
                     }
-            
+
             return response
-            
+
         except Exception as e:
             logger.error(f"Error handling message: {e}")
             return {"success": False, "message": "Server error"}
-    
+
     def broadcast_to_room(self, room_id: str, message: Dict):
         if room_id in self.games:
             game = self.games[room_id]
@@ -257,14 +275,14 @@ class GameServer:
                     self.send_message(player.socket, message)
                 except Exception as e:
                     logger.error(f"Error broadcasting to player {player.id}: {e}")
-    
+
     def send_message(self, client_socket, message: Dict):
         try:
             json_message = json.dumps(message)
             client_socket.send(f"{json_message}\n".encode())
         except Exception as e:
             logger.error(f"Error sending message: {e}")
-    
+
     @staticmethod
     def send_message_static(client_socket, message: Dict):
         try:
@@ -272,11 +290,11 @@ class GameServer:
             client_socket.send(f"{json_message}\n".encode())
         except Exception as e:
             logger.error(f"Error sending message: {e}")
-    
+
     def handle_client(self, client_socket, client_address):
         player_id = str(uuid.uuid4())
         logger.info(f"New client connected: {client_address} (ID: {player_id})")
-        
+
         try:
             while self.running:
                 data = client_socket.recv(1024).decode().strip()
@@ -288,14 +306,14 @@ class GameServer:
                     self.send_message(client_socket, response)
                 except json.JSONDecodeError:
                     self.send_message(client_socket, {"success": False, "message": "Invalid JSON"})
-                    
+
         except Exception as e:
             logger.error(f"Error with client {client_address}: {e}")
         finally:
             self.cleanup_client(player_id)
             client_socket.close()
             logger.info(f"Client {client_address} disconnected")
-    
+
     def cleanup_client(self, player_id: str):
         if player_id in self.client_to_game:
             room_id = self.client_to_game[player_id]
@@ -307,16 +325,16 @@ class GameServer:
                         del self.games[room_id]
                         logger.info(f"Removed empty room: {room_id}")
             del self.client_to_game[player_id]
-    
+
     def start_server(self):
         self.running = True
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((self.host, self.port))
         server_socket.listen(5)
-        
+
         logger.info(f"Memory Card Game Server started on {self.host}:{self.port}")
-        
+
         try:
             while self.running:
                 client_socket, client_address = server_socket.accept()
@@ -333,13 +351,13 @@ class GameServer:
             server_socket.close()
             self.executor.shutdown(wait=True)
 
-def main():    
+def main():
     import argparse
     parser = argparse.ArgumentParser(description='Memory Card Game Server')
     parser.add_argument('--host', default='localhost', help='Server host')
     parser.add_argument('--port', type=int, default=8888, help='Server port')
     args = parser.parse_args()
-    
+
     server = GameServer(args.host, args.port)
     server.start_server()
 

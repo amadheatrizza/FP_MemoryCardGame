@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 class GameState(Enum):
     MENU = "menu"
+    LEVEL_SELECT = "level_select"
     WAITING = "waiting"
     PLAYING = "playing"
     FINISHED = "finished"
@@ -226,6 +227,7 @@ class MemoryCardGame:
         self.room_id = None
         self.players = {}
         self.current_player = None
+        self.selected_level = "normal"  # Default level
         
         self.create_ui_elements()
         
@@ -233,13 +235,19 @@ class MemoryCardGame:
         self.status_timer = 0
         
     def create_ui_elements(self):
-        self.create_game_btn = Button(350, 250, 300, 60, "Create New Game")
+        # Main menu buttons - repositioned
+        self.create_game_btn = Button(350, 220, 300, 60, "Create New Game")
+        self.join_game_btn = Button(350, 340, 300, 60, "Join Game")
         
-        self.room_input = InputBox(350, 410, 300, 40, "Enter Room ID")
-        self.join_room_btn = Button(350, 470, 300, 40, "Join Room")
+        # Room input - moved between the buttons
+        self.room_input = InputBox(350, 280, 300, 40, "Enter Room ID")
         
+        # Level selection buttons
+        self.easy_level_btn = Button(300, 200, 200, 80, "Easy", (100, 200, 100))
+        self.normal_level_btn = Button(500, 200, 200, 80, "Normal", (200, 100, 100))
+        
+        # Game control buttons
         self.start_btn = Button(400, 500, 200, 50, "Start Game")
-        
         self.back_btn = Button(50, 50, 100, 40, "Back")
         
     def connect_to_server(self):
@@ -331,24 +339,25 @@ class MemoryCardGame:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 self.handle_mouse_click(event.pos)
             
-            
+            # Handle input box events in menu
             if self.state == GameState.MENU:
                 self.room_input.handle_event(event)
         
+        # Update button hover states
         mouse_pos = pygame.mouse.get_pos()
         self.create_game_btn.update(mouse_pos)
-        self.join_room_btn.update(mouse_pos)
+        self.join_game_btn.update(mouse_pos)
+        self.easy_level_btn.update(mouse_pos)
+        self.normal_level_btn.update(mouse_pos)
         self.start_btn.update(mouse_pos)
         self.back_btn.update(mouse_pos)
     
     def handle_mouse_click(self, pos: Tuple[int, int]):
         if self.state == GameState.MENU:
             if self.create_game_btn.is_clicked(pos):
-                if self.connect_to_server():
-                    self.client.send_message({'action': 'create_room', 'player_name': 'Player'})
-                    self.state = GameState.WAITING
+                self.state = GameState.LEVEL_SELECT
             
-            elif self.join_room_btn.is_clicked(pos):
+            elif self.join_game_btn.is_clicked(pos):
                 room_id = self.room_input.text.strip()
                 if room_id and self.connect_to_server():
                     self.client.send_message({
@@ -357,6 +366,32 @@ class MemoryCardGame:
                         'player_name': 'Player'
                     })
                     self.state = GameState.WAITING
+                else:
+                    self.show_status("Please enter a valid Room ID")
+        
+        elif self.state == GameState.LEVEL_SELECT:
+            if self.easy_level_btn.is_clicked(pos):
+                self.selected_level = "easy"
+                if self.connect_to_server():
+                    self.client.send_message({
+                        'action': 'create_room', 
+                        'player_name': 'Player',
+                        'level': 'easy'
+                    })
+                    self.state = GameState.WAITING
+            
+            elif self.normal_level_btn.is_clicked(pos):
+                self.selected_level = "normal"
+                if self.connect_to_server():
+                    self.client.send_message({
+                        'action': 'create_room', 
+                        'player_name': 'Player',
+                        'level': 'normal'
+                    })
+                    self.state = GameState.WAITING
+            
+            elif self.back_btn.is_clicked(pos):
+                self.state = GameState.MENU
         
         elif self.state == GameState.WAITING:
             if self.back_btn.is_clicked(pos):
@@ -387,15 +422,57 @@ class MemoryCardGame:
         self.screen.fill((30, 30, 50))
         
         title = self.font_large.render("Memory Card Game", True, (255, 255, 255))
-        title_rect = title.get_rect(center=(self.width // 2, 150))
+        title_rect = title.get_rect(center=(self.width // 2, 120))
         self.screen.blit(title, title_rect)
         
         self.create_game_btn.draw(self.screen, self.font_medium)
         
+        # Room ID input section between buttons
         room_label = self.font_small.render("Room ID:", True, (255, 255, 255))
-        self.screen.blit(room_label, (350, 385))
+        self.screen.blit(room_label, (350, 260))
         self.room_input.draw(self.screen, self.font_small)
-        self.join_room_btn.draw(self.screen, self.font_small)
+        
+        self.join_game_btn.draw(self.screen, self.font_medium)
+        
+        # Instructions
+        instruction1 = self.font_small.render("Create a new game to select difficulty level", True, (200, 200, 200))
+        instruction1_rect = instruction1.get_rect(center=(self.width // 2, 450))
+        self.screen.blit(instruction1, instruction1_rect)
+        
+        instruction2 = self.font_small.render("Or enter a Room ID above and click Join Game", True, (200, 200, 200))
+        instruction2_rect = instruction2.get_rect(center=(self.width // 2, 475))
+        self.screen.blit(instruction2, instruction2_rect)
+    
+    def draw_level_select(self):
+        self.screen.fill((30, 30, 50))
+        
+        self.back_btn.draw(self.screen, self.font_small)
+        
+        title = self.font_large.render("Select Difficulty", True, (255, 255, 255))
+        title_rect = title.get_rect(center=(self.width // 2, 120))
+        self.screen.blit(title, title_rect)
+        
+        self.easy_level_btn.draw(self.screen, self.font_medium)
+        self.normal_level_btn.draw(self.screen, self.font_medium)
+        
+        # Level descriptions
+        easy_desc1 = self.font_small.render("Easy Mode:", True, (255, 255, 255))
+        easy_desc2 = self.font_small.render("All cards shown for 3 seconds", True, (150, 255, 150))
+        easy_desc3 = self.font_small.render("at the start of the game", True, (150, 255, 150))
+        
+        normal_desc1 = self.font_small.render("Normal Mode:", True, (255, 255, 255))
+        normal_desc2 = self.font_small.render("No preview of cards", True, (255, 150, 150))
+        normal_desc3 = self.font_small.render("Classic memory game", True, (255, 150, 150))
+        
+        # Easy mode description
+        self.screen.blit(easy_desc1, (320, 300))
+        self.screen.blit(easy_desc2, (320, 325))
+        self.screen.blit(easy_desc3, (320, 350))
+        
+        # Normal mode description
+        self.screen.blit(normal_desc1, (520, 300))
+        self.screen.blit(normal_desc2, (520, 325))
+        self.screen.blit(normal_desc3, (520, 350))
     
     def draw_waiting(self):
         self.screen.fill((30, 30, 50))
@@ -408,8 +485,15 @@ class MemoryCardGame:
         
         if self.room_id:
             room_text = self.font_medium.render(f"Room ID: {self.room_id}", True, (255, 255, 255))
-            room_rect = room_text.get_rect(center=(self.width // 2, 250))
+            room_rect = room_text.get_rect(center=(self.width // 2, 220))
             self.screen.blit(room_text, room_rect)
+        
+        # Show selected level
+        if hasattr(self, 'game_state_data') and self.game_state_data:
+            level = self.game_state_data.get('level', 'normal')
+            level_text = self.font_small.render(f"Difficulty: {level.title()}", True, (200, 200, 255))
+            level_rect = level_text.get_rect(center=(self.width // 2, 250))
+            self.screen.blit(level_text, level_rect)
         
         y_offset = 300
         for player_id, player_data in self.players.items():
@@ -421,6 +505,10 @@ class MemoryCardGame:
             instruction = self.font_small.render("Waiting for another player to join...", True, (200, 200, 200))
             instruction_rect = instruction.get_rect(center=(self.width // 2, 400))
             self.screen.blit(instruction, instruction_rect)
+            
+            share_text = self.font_small.render("Share the Room ID with a friend!", True, (150, 150, 255))
+            share_rect = share_text.get_rect(center=(self.width // 2, 430))
+            self.screen.blit(share_text, share_rect)
         else:
             instruction = self.font_small.render("Game will start automatically when both players are ready!", True, (200, 200, 200))
             instruction_rect = instruction.get_rect(center=(self.width // 2, 400))
@@ -434,6 +522,13 @@ class MemoryCardGame:
         title = self.font_medium.render("Memory Card Game", True, (255, 255, 255))
         self.screen.blit(title, (self.width // 2 - 100, 20))
         
+        # Show level in game
+        if hasattr(self, 'game_state_data') and self.game_state_data:
+            level = self.game_state_data.get('level', 'normal')
+            level_text = self.font_small.render(f"Level: {level.title()}", True, (200, 200, 255))
+            self.screen.blit(level_text, (750, 25))
+        
+        # Player scores
         x_offset = 50
         for player_id, player_data in self.players.items():
             name = player_data['name']
@@ -448,6 +543,7 @@ class MemoryCardGame:
             self.screen.blit(score_text, (x_offset, 70))
             x_offset += 200
         
+        # Current turn indicator
         if self.current_player:
             current_name = self.players.get(self.current_player, {}).get('name', 'Unknown')
             if self.current_player == self.player_id:
@@ -461,6 +557,7 @@ class MemoryCardGame:
             turn_rect = turn_surface.get_rect(center=(self.width // 2, 110))
             self.screen.blit(turn_surface, turn_rect)
         
+        # Draw cards
         for card in self.cards:
             card.draw(self.screen)
     
@@ -511,6 +608,8 @@ class MemoryCardGame:
             
             if self.state == GameState.MENU:
                 self.draw_menu()
+            elif self.state == GameState.LEVEL_SELECT:
+                self.draw_level_select()
             elif self.state == GameState.WAITING:
                 self.draw_waiting()
             elif self.state == GameState.PLAYING:
