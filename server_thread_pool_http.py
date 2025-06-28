@@ -5,11 +5,12 @@ import uuid
 import string
 import random
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List
 import logging
+from https import HttpServer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -178,37 +179,50 @@ class GameSession:
                 logger.error(f"Error sending update to player {player.id}: {e}")
 
 class GameServer:
-    def __init__(self, host='localhost', port=8888):
+    def __init__(self, host='0.0.0.0', port=8888):
         self.host = host
         self.port = port
-        self.games: Dict[str, GameSession] = {}
+        self.httpserver = HttpServer()
         self.client_to_game: Dict[str, str] = {}
-        self.executor = ProcessPoolExecutor(max_workers=4)
-        self.running = False
+        self.games: Dict[str, GameSession] = {}
+        self.running = True
 
-    def create_room(self, level="normal") -> str:
-        room_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        self.games[room_id] = GameSession(room_id, level=level)
-        logger.info(f"Created room: {room_id} with level: {level}")
-        return room_id
+    def handle_client(self, connection, address):
+        rcv = ""
+        player_id = str(uuid.uuid4())
+        logger.info(f"New client connected: {address} (ID: {player_id})")
+        try:
+            while self.running:
+                data = connection.recv(1024)
+                if not data:
+                    break
+                decoded = data.decode().strip()
+                if decoded.startswith("GET") or decoded.startswith("POST"):
+                    response = self.httpserver.proses(decoded)
+                    response += "\r\r".encode()
+                    connection.sendall(response)
+                    break
+                else:
+                    try:
+                        message = json.loads(decoded)
+                        response = self.handle_game_message(connection, player_id, message)
+                        self.send_message(connection, response)
+                    except json.JSONDecodeError:
+                        self.send_message(connection, {"success": False, "message": "Invalid JSON"})
+        except Exception as e:
+            logger.error(f"Client error: {e}")
+        finally:
+            self.cleanup_client(player_id)
+            connection.close()
+            logger.info(f"Client {address} disconnected")
 
-    def join_room(self, room_id: str, player: Player) -> bool:
-        if room_id in self.games:
-            success = self.games[room_id].add_player(player)
-            if success:
-                self.client_to_game[player.id] = room_id
-                logger.info(f"Player {player.id} joined room {room_id}")
-            return success
-        return False
-
-    def handle_client_message(self, client_socket, player_id: str, message: Dict):
+    def handle_game_message(self, client_socket, player_id, message):
         try:
             action = message.get('action')
             response = {"success": False, "message": "Unknown action"}
-
             if action == 'create_room':
                 level = message.get('level', 'normal')
-                room_id = self.create_room(level=level)
+                room_id = self.create_room(level)
                 player = Player(player_id, client_socket, message.get('player_name', ''))
                 self.join_room(room_id, player)
                 response = {
@@ -217,7 +231,6 @@ class GameServer:
                     "player_id": player_id,
                     "game_state": self.games[room_id].get_game_state()
                 }
-
             elif action == 'join_room':
                 room_id = message.get('room_id')
                 if room_id in self.games:
@@ -237,14 +250,13 @@ class GameServer:
                         response = {"success": False, "message": "Room is full"}
                 else:
                     response = {"success": False, "message": "Room not found"}
-
             elif action == 'reveal_card':
                 room_id = self.client_to_game.get(player_id)
                 if room_id and room_id in self.games:
                     card_id = message.get('card_id')
                     result = self.games[room_id].reveal_card(card_id, player_id)
+                    result["game_state"] = self.games[room_id].get_game_state()
                     response = result
-                    response["game_state"] = self.games[room_id].get_game_state()
                     self.broadcast_to_room(room_id, {
                         "type": "game_update",
                         "result": result,
@@ -252,7 +264,6 @@ class GameServer:
                     })
                 else:
                     response = {"success": False, "message": "Not in a game"}
-
             elif action == 'get_game_state':
                 room_id = self.client_to_game.get(player_id)
                 if room_id and room_id in self.games:
@@ -260,17 +271,29 @@ class GameServer:
                         "success": True,
                         "game_state": self.games[room_id].get_game_state()
                     }
-
             return response
-
         except Exception as e:
             logger.error(f"Error handling message: {e}")
             return {"success": False, "message": "Server error"}
 
+    def create_room(self, level="normal") -> str:
+        room_id = ''.join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", k=6))
+        self.games[room_id] = GameSession(room_id, level=level)
+        logger.info(f"Created room: {room_id} with level: {level}")
+        return room_id
+
+    def join_room(self, room_id: str, player: Player) -> bool:
+        if room_id in self.games:
+            success = self.games[room_id].add_player(player)
+            if success:
+                self.client_to_game[player.id] = room_id
+                logger.info(f"Player {player.id} joined room {room_id}")
+            return success
+        return False
+
     def broadcast_to_room(self, room_id: str, message: Dict):
         if room_id in self.games:
-            game = self.games[room_id]
-            for player in game.players.values():
+            for player in self.games[room_id].players.values():
                 try:
                     self.send_message(player.socket, message)
                 except Exception as e:
@@ -283,83 +306,34 @@ class GameServer:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
-    @staticmethod
-    def send_message_static(client_socket, message: Dict):
-        try:
-            json_message = json.dumps(message)
-            client_socket.send(f"{json_message}\n".encode())
-        except Exception as e:
-            logger.error(f"Error sending message: {e}")
-
-    def handle_client(self, client_socket, client_address):
-        player_id = str(uuid.uuid4())
-        logger.info(f"New client connected: {client_address} (ID: {player_id})")
-
-        try:
-            while self.running:
-                data = client_socket.recv(1024).decode().strip()
-                if not data:
-                    break
-                try:
-                    message = json.loads(data)
-                    response = self.handle_client_message(client_socket, player_id, message)
-                    self.send_message(client_socket, response)
-                except json.JSONDecodeError:
-                    self.send_message(client_socket, {"success": False, "message": "Invalid JSON"})
-
-        except Exception as e:
-            logger.error(f"Error with client {client_address}: {e}")
-        finally:
-            self.cleanup_client(player_id)
-            client_socket.close()
-            logger.info(f"Client {client_address} disconnected")
-
     def cleanup_client(self, player_id: str):
         if player_id in self.client_to_game:
             room_id = self.client_to_game[player_id]
             if room_id in self.games:
-                game = self.games[room_id]
-                if player_id in game.players:
-                    del game.players[player_id]
-                    if len(game.players) == 0:
+                if player_id in self.games[room_id].players:
+                    del self.games[room_id].players[player_id]
+                    if not self.games[room_id].players:
                         del self.games[room_id]
                         logger.info(f"Removed empty room: {room_id}")
             del self.client_to_game[player_id]
 
-    def start_server(self):
-        self.running = True
+    def start(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((self.host, self.port))
         server_socket.listen(5)
+        logger.info(f"Unified Server listening on {self.host}:{self.port}")
 
-        logger.info(f"Memory Card Game Server started on {self.host}:{self.port}")
-
-        try:
-            while self.running:
-                client_socket, client_address = server_socket.accept()
-                client_thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_socket, client_address)
-                )
-                client_thread.daemon = True
-                client_thread.start()
-        except KeyboardInterrupt:
-            logger.info("Server shutting down...")
-        finally:
-            self.running = False
-            server_socket.close()
-            self.executor.shutdown(wait=True)
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description='Memory Card Game Server')
-    parser.add_argument('--host', default='localhost', help='Server host')
-    parser.add_argument('--port', type=int, default=8888, help='Server port')
-    args = parser.parse_args()
-
-    server = GameServer(args.host, args.port)
-    server.start_server()
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            try:
+                while self.running:
+                    conn, addr = server_socket.accept()
+                    executor.submit(self.handle_client, conn, addr)
+            except KeyboardInterrupt:
+                logger.info("Server shutting down...")
+            finally:
+                server_socket.close()
+                self.running = False
 
 if __name__ == "__main__":
-    main()
+    GameServer().start()
