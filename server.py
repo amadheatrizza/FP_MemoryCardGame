@@ -5,7 +5,6 @@ import uuid
 import string
 import random
 import time
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List
@@ -54,13 +53,12 @@ class GameSession:
         self.cards = [Card(i, value) for i, value in enumerate(all_cards)]
 
     def add_player(self, player: Player) -> bool:
-        if len(self.players) < 4:  # dari 2 menjadi 4
+        if len(self.players) < 4:
             self.players[player.id] = player
-            if len(self.players) >= 2:  # mulai game saat minimal 2 pemain
+            if len(self.players) >= 2:
                 self.start_game()
             return True
         return False
-
 
     def start_game(self):
         self.state = GameState.IN_PROGRESS
@@ -132,12 +130,9 @@ class GameSession:
         player_ids = list(self.players.keys())
         current_index = player_ids.index(self.current_player_id)
         next_index = (current_index + 1) % len(player_ids)
-
-        # Update turn flags
         self.players[self.current_player_id].is_turn = False
         self.current_player_id = player_ids[next_index]
         self.players[self.current_player_id].is_turn = True
-
 
     def finish_game(self):
         self.state = GameState.FINISHED
@@ -189,7 +184,6 @@ class GameServer:
         self.port = port
         self.games: Dict[str, GameSession] = {}
         self.client_to_game: Dict[str, str] = {}
-        self.executor = ProcessPoolExecutor(max_workers=4)
         self.running = False
 
     def create_room(self, level="normal") -> str:
@@ -355,7 +349,6 @@ class GameServer:
         finally:
             self.running = False
             server_socket.close()
-            self.executor.shutdown(wait=True)
 
 def main():
     import argparse
