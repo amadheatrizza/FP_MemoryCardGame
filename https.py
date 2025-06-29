@@ -94,7 +94,7 @@ class HttpServer:
 		isi = "kosong"
 		return self.response(200,'OK',isi,headers)
 		
-	def start_http_server(self, host='localhost', port=8000):
+	def start_http_server(self, host='0.0.0.0', port=8001):
 		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
 			server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 			server_socket.bind((host, port))

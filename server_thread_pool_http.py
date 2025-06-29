@@ -181,7 +181,7 @@ class GameSession:
                 logger.error(f"Error sending update to player {player.id}: {e}")
 
 class GameServer:
-    def __init__(self, host='0.0.0.0', port=8888):
+    def __init__(self, host='0.0.0.0', port=8001):
         self.host = host
         self.port = port
         self.httpserver = HttpServer()
@@ -354,7 +354,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8888, help="Port to run game server on")
+    parser.add_argument("--port", type=int, default=8001, help="Port to run game server on")
     args = parser.parse_args()
 
     server = GameServer(port=args.port)

@@ -1,7 +1,7 @@
 import socket
 import threading
 
-backend_servers = [("localhost", 9001), ("localhost", 9002), ("localhost", 9003)]
+backend_servers = [("0.0.0.0", 8001), ("0.0.0.0", 8002), ("0.0.0.0", 8003)]
 server_index = 0
 lock = threading.Lock()
 
