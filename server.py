@@ -54,18 +54,20 @@ class GameSession:
         self.cards = [Card(i, value) for i, value in enumerate(all_cards)]
 
     def add_player(self, player: Player) -> bool:
-        if len(self.players) < 2:
+        if len(self.players) < 4:  # dari 2 menjadi 4
             self.players[player.id] = player
-            if len(self.players) == 2:
+            if len(self.players) >= 2:  # mulai game saat minimal 2 pemain
                 self.start_game()
             return True
         return False
+
 
     def start_game(self):
         self.state = GameState.IN_PROGRESS
         player_ids = list(self.players.keys())
         self.current_player_id = random.choice(player_ids)
         self.players[self.current_player_id].is_turn = True
+        self.broadcast_game_update()
         logger.info(f"Game {self.room_id} started with players: {player_ids} at level: {self.level}")
 
         if self.level == "easy":
@@ -127,11 +129,15 @@ class GameSession:
         return result
 
     def switch_turn(self):
-        current_player = self.players[self.current_player_id]
-        current_player.is_turn = False
-        other_player_id = [pid for pid in self.players.keys() if pid != self.current_player_id][0]
-        self.current_player_id = other_player_id
-        self.players[other_player_id].is_turn = True
+        player_ids = list(self.players.keys())
+        current_index = player_ids.index(self.current_player_id)
+        next_index = (current_index + 1) % len(player_ids)
+
+        # Update turn flags
+        self.players[self.current_player_id].is_turn = False
+        self.current_player_id = player_ids[next_index]
+        self.players[self.current_player_id].is_turn = True
+
 
     def finish_game(self):
         self.state = GameState.FINISHED
