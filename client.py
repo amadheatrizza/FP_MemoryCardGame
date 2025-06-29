@@ -4,6 +4,8 @@ import json
 import threading
 import time
 import sys
+import math
+import random
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 import logging
@@ -102,85 +104,293 @@ class Card:
         self.matched = False
         self.rect = pygame.Rect(x, y, width, height)
         
+        # Animation properties
+        self.flip_progress = 0.0  # 0.0 = face down, 1.0 = face up
+        self.target_flip = 0.0
+        self.bounce_offset = 0.0
+        self.bounce_timer = 0.0
+        self.shake_offset_x = 0.0
+        self.shake_offset_y = 0.0
+        self.shake_timer = 0.0
+        self.scale = 1.0
+        self.target_scale = 1.0
+        self.glow_intensity = 0.0
+        self.match_celebration_timer = 0.0
+        
+        # Enhanced color palette with gradients
         self.colors = {
-            'card_0': (255, 100, 100),  # Red
-            'card_1': (100, 255, 100),  # Green
-            'card_2': (100, 100, 255),  # Blue
-            'card_3': (255, 255, 100),  # Yellow
-            'card_4': (255, 100, 255),  # Magenta
-            'card_5': (100, 255, 255),  # Cyan
-            'card_6': (255, 150, 100),  # Orange
-            'card_7': (150, 100, 255),  # Purple
+            'card_0': [(255, 120, 120), (220, 80, 80)],   # Red gradient
+            'card_1': [(120, 255, 120), (80, 220, 80)],   # Green gradient
+            'card_2': [(120, 120, 255), (80, 80, 220)],   # Blue gradient
+            'card_3': [(255, 255, 120), (220, 220, 80)],  # Yellow gradient
+            'card_4': [(255, 120, 255), (220, 80, 220)],  # Magenta gradient
+            'card_5': [(120, 255, 255), (80, 220, 220)],  # Cyan gradient
+            'card_6': [(255, 180, 120), (220, 140, 80)],  # Orange gradient
+            'card_7': [(180, 120, 255), (140, 80, 220)],  # Purple gradient
         }
+        
+        # Card back gradient
+        self.back_color = [(70, 70, 180), (40, 40, 120)]
     
-    def update(self, card_data: Dict):
+    def update(self, card_data: Dict, dt: float):
+        old_revealed = self.revealed
+        old_matched = self.matched
+        
         self.value = card_data.get('value')
         self.revealed = card_data.get('revealed', False)
         self.matched = card_data.get('matched', False)
+        
+        # Update flip animation
+        if self.revealed or self.matched:
+            self.target_flip = 1.0
+        else:
+            self.target_flip = 0.0
+        
+        # Smooth flip animation
+        flip_speed = 8.0
+        if abs(self.flip_progress - self.target_flip) > 0.01:
+            if self.flip_progress < self.target_flip:
+                self.flip_progress = min(1.0, self.flip_progress + flip_speed * dt)
+            else:
+                self.flip_progress = max(0.0, self.flip_progress - flip_speed * dt)
+        
+        # Bounce effect when revealed
+        if self.revealed and not old_revealed:
+            self.bounce_timer = 0.5
+        
+        if self.bounce_timer > 0:
+            self.bounce_timer -= dt
+            bounce_progress = 1.0 - (self.bounce_timer / 0.5)
+            self.bounce_offset = math.sin(bounce_progress * math.pi * 3) * 10 * (1 - bounce_progress)
+        else:
+            self.bounce_offset = 0
+        
+        # Match celebration
+        if self.matched and not old_matched:
+            self.match_celebration_timer = 1.0
+            self.target_scale = 1.2
+        
+        if self.match_celebration_timer > 0:
+            self.match_celebration_timer -= dt
+            if self.match_celebration_timer <= 0:
+                self.target_scale = 1.0
+        
+        # Scale animation
+        scale_speed = 5.0
+        if abs(self.scale - self.target_scale) > 0.01:
+            if self.scale < self.target_scale:
+                self.scale = min(self.target_scale, self.scale + scale_speed * dt)
+            else:
+                self.scale = max(self.target_scale, self.scale - scale_speed * dt)
+        
+        # Shake effect for mismatched cards
+        if self.shake_timer > 0:
+            self.shake_timer -= dt
+            shake_intensity = self.shake_timer / 0.3
+            self.shake_offset_x = (random.random() - 0.5) * 10 * shake_intensity
+            self.shake_offset_y = (random.random() - 0.5) * 10 * shake_intensity
+        else:
+            self.shake_offset_x = 0
+            self.shake_offset_y = 0
+        
+        # Glow effect for current turn
+        if self.glow_intensity > 0:
+            self.glow_intensity = max(0, self.glow_intensity - dt * 2)
+    
+    def trigger_shake(self):
+        self.shake_timer = 0.3
+    
+    def trigger_glow(self):
+        self.glow_intensity = 1.0
+    
+    def draw_gradient_rect(self, surface, color1, color2, rect, corner_radius=15):
+        """Draw a rounded rectangle with gradient"""
+        # Create a temporary surface for the gradient
+        temp_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        
+        for y in range(max(1, rect.height)):
+            ratio = y / max(1, rect.height)
+            r = int(color1[0] * (1 - ratio) + color2[0] * ratio)
+            g = int(color1[1] * (1 - ratio) + color2[1] * ratio)
+            b = int(color1[2] * (1 - ratio) + color2[2] * ratio)
+            pygame.draw.line(temp_surface, (r, g, b), (0, y), (rect.width, y))
+        
+        # Create rounded rect mask
+        mask_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(mask_surface, (255, 255, 255, 255), 
+                        (0, 0, rect.width, rect.height), border_radius=corner_radius)
+        
+        # Apply mask to gradient
+        temp_surface.blit(mask_surface, (0, 0), special_flags=pygame.BLEND_ALPHA_SDL2)
+        
+        # Blit to main surface
+        surface.blit(temp_surface, rect.topleft)
     
     def draw(self, screen):
-        if self.revealed or self.matched:
-            color = self.colors.get(self.value, (128, 128, 128))
-            pygame.draw.rect(screen, color, self.rect)
-            pygame.draw.rect(screen, (0, 0, 0), self.rect, 2)
+        # Calculate animated position and size
+        animated_x = self.x + self.shake_offset_x
+        animated_y = self.y + self.shake_offset_y - self.bounce_offset
+        
+        # Calculate scaled dimensions
+        scaled_width = int(self.width * self.scale)
+        scaled_height = int(self.height * self.scale)
+        scaled_x = animated_x + (self.width - scaled_width) // 2
+        scaled_y = animated_y + (self.height - scaled_height) // 2
+        
+        animated_rect = pygame.Rect(scaled_x, scaled_y, scaled_width, scaled_height)
+        
+        # Draw glow effect
+        if self.glow_intensity > 0:
+            glow_surface = pygame.Surface((scaled_width + 20, scaled_height + 20), pygame.SRCALPHA)
+            glow_color = (255, 255, 100, int(50 * self.glow_intensity))
+            pygame.draw.rect(glow_surface, glow_color,
+                           (0, 0, scaled_width + 20, scaled_height + 20), border_radius=25)
+            screen.blit(glow_surface, (scaled_x - 10, scaled_y - 10))
+        
+        # Calculate flip effect (3D-like perspective)
+        flip_scale_x = abs(math.cos(self.flip_progress * math.pi))
+        if flip_scale_x < 0.1:
+            flip_scale_x = 0.1
+        
+        flip_width = int(scaled_width * flip_scale_x)
+        flip_x = scaled_x + (scaled_width - flip_width) // 2
+        flip_rect = pygame.Rect(flip_x, scaled_y, flip_width, scaled_height)
+        
+        # Determine if we should show front or back
+        show_front = self.flip_progress > 0.5
+        
+        if show_front and (self.revealed or self.matched):
+            # Draw card front
+            if self.value in self.colors:
+                color1, color2 = self.colors[self.value]
+            else:
+                color1, color2 = (128, 128, 128), (100, 100, 100)
             
-            center_x = self.rect.centerx
-            center_y = self.rect.centery
-            pygame.draw.circle(screen, (255, 255, 255), (center_x, center_y), 20)
+            self.draw_gradient_rect(screen, color1, color2, flip_rect, 15)
             
+            # Draw border
+            border_color = (255, 255, 255) if not self.matched else (0, 255, 0)
+            pygame.draw.rect(screen, border_color, flip_rect, 3, border_radius=15)
+            
+            # Draw symbol in center
+            center_x = flip_rect.centerx
+            center_y = flip_rect.centery
+            symbol_radius = min(20, flip_width // 4)
+            
+            # White circle background
+            pygame.draw.circle(screen, (255, 255, 255), (center_x, center_y), symbol_radius + 5)
+            pygame.draw.circle(screen, (0, 0, 0), (center_x, center_y), symbol_radius + 5, 2)
+            
+            # Draw value-specific symbol
+            if self.value:
+                symbol_color = color2  # Use darker gradient color
+                pygame.draw.circle(screen, symbol_color, (center_x, center_y), symbol_radius)
+            
+            # Match checkmark
             if self.matched:
                 pygame.draw.lines(screen, (0, 200, 0), False, 
-                                [(center_x - 10, center_y), 
-                                 (center_x - 5, center_y + 5), 
-                                 (center_x + 10, center_y - 5)], 3)
+                                [(center_x - 12, center_y), 
+                                 (center_x - 6, center_y + 6), 
+                                 (center_x + 12, center_y - 6)], 4)
         else:
-            pygame.draw.rect(screen, (50, 50, 150), self.rect)
-            pygame.draw.rect(screen, (0, 0, 0), self.rect, 2)
+            # Draw card back
+            self.draw_gradient_rect(screen, self.back_color[0], self.back_color[1], flip_rect, 15)
             
-            center_x = self.rect.centerx
-            center_y = self.rect.centery
-            pygame.draw.lines(screen, (100, 100, 200), False,
-                            [(center_x - 15, center_y - 15),
-                             (center_x + 15, center_y + 15)], 2)
-            pygame.draw.lines(screen, (100, 100, 200), False,
-                            [(center_x + 15, center_y - 15),
-                             (center_x - 15, center_y + 15)], 2)
+            # Draw border
+            pygame.draw.rect(screen, (100, 100, 255), flip_rect, 3, border_radius=15)
+            
+            # Draw decorative pattern on back
+            center_x = flip_rect.centerx
+            center_y = flip_rect.centery
+            
+            # Diamond pattern
+            diamond_size = min(15, flip_width // 6)
+            diamond_points = [
+                (center_x, center_y - diamond_size),
+                (center_x + diamond_size, center_y),
+                (center_x, center_y + diamond_size),
+                (center_x - diamond_size, center_y)
+            ]
+            pygame.draw.polygon(screen, (150, 150, 255), diamond_points)
+            pygame.draw.polygon(screen, (200, 200, 255), diamond_points, 2)
     
     def is_clicked(self, pos: Tuple[int, int]) -> bool:
         return self.rect.collidepoint(pos)
 
 class Button:
-    def __init__(self, x: int, y: int, width: int, height: int, text: str, color=(100, 100, 200)):
+    def __init__(self, x: int, y: int, width: int, height: int, text: str, 
+                 color=(70, 130, 180), hover_color=None):
         self.rect = pygame.Rect(x, y, width, height)
         self.text = text
         self.color = color
-        self.hover_color = (min(255, color[0] + 50), min(255, color[1] + 50), min(255, color[2] + 50))
+        self.hover_color = hover_color or (min(255, color[0] + 40), 
+                                          min(255, color[1] + 40), 
+                                          min(255, color[2] + 40))
         self.is_hovered = False
+        self.scale = 1.0
+        self.target_scale = 1.0
         
-    def update(self, mouse_pos: Tuple[int, int]):
+    def update(self, mouse_pos: Tuple[int, int], dt: float):
+        was_hovered = self.is_hovered
         self.is_hovered = self.rect.collidepoint(mouse_pos)
+        
+        if self.is_hovered and not was_hovered:
+            self.target_scale = 1.05
+        elif not self.is_hovered and was_hovered:
+            self.target_scale = 1.0
+        
+        # Smooth scale animation
+        scale_speed = 8.0
+        if abs(self.scale - self.target_scale) > 0.01:
+            if self.scale < self.target_scale:
+                self.scale = min(self.target_scale, self.scale + scale_speed * dt)
+            else:
+                self.scale = max(self.target_scale, self.scale - scale_speed * dt)
     
     def draw(self, screen, font):
-        color = self.hover_color if self.is_hovered else self.color
-        pygame.draw.rect(screen, color, self.rect)
-        pygame.draw.rect(screen, (0, 0, 0), self.rect, 2)
+        # Calculate scaled rect
+        scaled_width = int(self.rect.width * self.scale)
+        scaled_height = int(self.rect.height * self.scale)
+        scaled_x = self.rect.x + (self.rect.width - scaled_width) // 2
+        scaled_y = self.rect.y + (self.rect.height - scaled_height) // 2
+        scaled_rect = pygame.Rect(scaled_x, scaled_y, scaled_width, scaled_height)
         
+        # Choose color
+        current_color = self.hover_color if self.is_hovered else self.color
+        
+        # Draw button background with rounded corners
+        pygame.draw.rect(screen, current_color, scaled_rect, border_radius=10)
+        
+        # Draw a subtle shadow effect
+        shadow_color = (max(0, current_color[0] - 50),
+                       max(0, current_color[1] - 50),
+                       max(0, current_color[2] - 50))
+        shadow_rect = pygame.Rect(scaled_x + 2, scaled_y + 2, scaled_width, scaled_height)
+        pygame.draw.rect(screen, shadow_color, shadow_rect, border_radius=10)
+        pygame.draw.rect(screen, current_color, scaled_rect, border_radius=10)
+        
+        # Draw border
+        border_color = (255, 255, 255) if self.is_hovered else (200, 200, 200)
+        pygame.draw.rect(screen, border_color, scaled_rect, 2, border_radius=10)
+        
+        # Draw text
         text_surface = font.render(self.text, True, (255, 255, 255))
-        text_rect = text_surface.get_rect(center=self.rect.center)
+        text_rect = text_surface.get_rect(center=scaled_rect.center)
         screen.blit(text_surface, text_rect)
     
     def is_clicked(self, pos: Tuple[int, int]) -> bool:
         return self.rect.collidepoint(pos)
-
+    
 class InputBox:
     def __init__(self, x: int, y: int, width: int, height: int, placeholder: str = ""):
         self.rect = pygame.Rect(x, y, width, height)
-        self.color_inactive = (100, 100, 100)
-        self.color_active = (150, 150, 200)
+        self.color_inactive = (60, 60, 80)
+        self.color_active = (80, 80, 120)
         self.color = self.color_inactive
         self.text = ""
         self.placeholder = placeholder
         self.active = False
+        self.cursor_timer = 0
         
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -192,16 +402,30 @@ class InputBox:
                 if event.key == pygame.K_BACKSPACE:
                     self.text = self.text[:-1]
                 else:
-                    self.text += event.unicode
+                    if len(self.text) < 10:  # Limit input length
+                        self.text += event.unicode
+    
+    def update(self, dt: float):
+        self.cursor_timer += dt
     
     def draw(self, screen, font):
-        pygame.draw.rect(screen, self.color, self.rect)
-        pygame.draw.rect(screen, (0, 0, 0), self.rect, 2)
+        # Draw input box with rounded corners
+        pygame.draw.rect(screen, self.color, self.rect, border_radius=8)
+        pygame.draw.rect(screen, (200, 200, 200), self.rect, 2, border_radius=8)
         
+        # Draw text or placeholder
         display_text = self.text if self.text else self.placeholder
         text_color = (255, 255, 255) if self.text else (150, 150, 150)
         text_surface = font.render(display_text, True, text_color)
-        screen.blit(text_surface, (self.rect.x + 5, self.rect.y + 5))
+        text_y = self.rect.y + (self.rect.height - text_surface.get_height()) // 2
+        screen.blit(text_surface, (self.rect.x + 10, text_y))
+        
+        # Draw cursor when active
+        if self.active and self.cursor_timer % 1.0 < 0.5:
+            cursor_x = self.rect.x + 10 + font.size(self.text)[0]
+            cursor_y = self.rect.y + 5
+            pygame.draw.line(screen, (255, 255, 255), 
+                           (cursor_x, cursor_y), (cursor_x, cursor_y + self.rect.height - 10), 2)
 
 class MemoryCardGame:
     def __init__(self):
@@ -234,22 +458,27 @@ class MemoryCardGame:
         self.status_message = ""
         self.status_timer = 0
         
+        # Background animation
+        self.bg_time = 0
+        
+
     def create_ui_elements(self):
-        # Main menu buttons - repositioned
-        self.create_game_btn = Button(350, 220, 300, 60, "Create New Game")
-        self.join_game_btn = Button(350, 340, 300, 60, "Join Game")
+        # Main menu buttons - better positioning to match visual layout
+        self.create_game_btn = Button(350, 200, 300, 50, "Create New Game", (70, 130, 180))
         
-        # Room input - moved between the buttons
-        self.room_input = InputBox(350, 280, 300, 40, "Enter Room ID")
+        # Room input - positioned to match the visual background in draw_menu
+        self.room_input = InputBox(350, 275 + 50, 300, 35, "Enter Room ID")
         
-        # Level selection buttons
-        self.easy_level_btn = Button(300, 200, 200, 80, "Easy", (100, 200, 100))
-        self.normal_level_btn = Button(500, 200, 200, 80, "Normal", (200, 100, 100))
+        # Join button - positioned after room input with proper spacing
+        self.join_game_btn = Button(350, 320 + 60, 300, 50, "Join Game", (100, 150, 100))
+        
+        # Level selection buttons with distinct colors - better spacing
+        self.easy_level_btn = Button(330, 200, 200, 80, "Easy", (100, 200, 100))
+        self.normal_level_btn = Button(570, 200, 200, 80, "Normal", (200, 100, 100))
         
         # Game control buttons
-        self.start_btn = Button(400, 500, 200, 50, "Start Game")
-        self.back_btn = Button(50, 50, 100, 40, "Back")
-        
+        self.start_btn = Button(400, 500, 200, 50, "Start Game", (180, 70, 70))
+        self.back_btn = Button(50, 50, 100, 40, "Back", (120, 120, 120))  
     def connect_to_server(self):
         if not self.client.connected:
             if not self.client.connect():
@@ -306,8 +535,16 @@ class MemoryCardGame:
             if 'match' in result:
                 if result['match']:
                     self.show_status("Match found!")
+                    # Trigger celebration on matched cards
+                    for card in self.cards:
+                        if card.revealed and card.matched:
+                            card.match_celebration_timer = 1.0
                 else:
                     self.show_status("No match. Turn switches.")
+                    # Trigger shake on mismatched cards
+                    for card in self.cards:
+                        if card.revealed and not card.matched:
+                            card.trigger_shake()
         else:
             self.show_status(message.get('message', 'Unknown error'))
     
@@ -320,9 +557,16 @@ class MemoryCardGame:
         if not self.cards and cards_data:
             self.create_cards_grid(len(cards_data))
         
+        dt = self.clock.get_time() / 1000.0
         for i, card_data in enumerate(cards_data):
             if i < len(self.cards):
-                self.cards[i].update(card_data)
+                self.cards[i].update(card_data, dt)
+        
+        # Trigger glow effect for current player's turn
+        if self.current_player == self.player_id:
+            for card in self.cards:
+                if not card.revealed and not card.matched:
+                    card.trigger_glow()
         
         if game_state.get('state') == 'in_progress':
             self.state = GameState.PLAYING
@@ -332,6 +576,8 @@ class MemoryCardGame:
             self.state = GameState.WAITING
     
     def handle_events(self):
+        dt = self.clock.get_time() / 1000.0
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -343,14 +589,21 @@ class MemoryCardGame:
             if self.state == GameState.MENU:
                 self.room_input.handle_event(event)
         
-        # Update button hover states
+        # Update button hover states with delta time
         mouse_pos = pygame.mouse.get_pos()
-        self.create_game_btn.update(mouse_pos)
-        self.join_game_btn.update(mouse_pos)
-        self.easy_level_btn.update(mouse_pos)
-        self.normal_level_btn.update(mouse_pos)
-        self.start_btn.update(mouse_pos)
-        self.back_btn.update(mouse_pos)
+        self.create_game_btn.update(mouse_pos, dt)
+        self.join_game_btn.update(mouse_pos, dt)
+        self.easy_level_btn.update(mouse_pos, dt)
+        self.normal_level_btn.update(mouse_pos, dt)
+        self.start_btn.update(mouse_pos, dt)
+        self.back_btn.update(mouse_pos, dt)
+        
+        if self.state == GameState.MENU:
+            self.room_input.update(dt)
+        
+        # Update card animations
+        for card in self.cards:
+            card.update({'value': card.value, 'revealed': card.revealed, 'matched': card.matched}, dt)
     
     def handle_mouse_click(self, pos: Tuple[int, int]):
         if self.state == GameState.MENU:
@@ -418,158 +671,296 @@ class MemoryCardGame:
                 self.state = GameState.MENU
                 self.client.disconnect()
     
-    def draw_menu(self):
-        self.screen.fill((30, 30, 50))
+    def draw_animated_background(self):
+        """Draw animated gradient background"""
+        self.bg_time += self.clock.get_time() / 1000.0
         
-        title = self.font_large.render("Memory Card Game", True, (255, 255, 255))
-        title_rect = title.get_rect(center=(self.width // 2, 120))
-        self.screen.blit(title, title_rect)
+        # Create animated gradient colors
+        r1 = int(30 + 15 * math.sin(self.bg_time * 0.5))
+        g1 = int(30 + 15 * math.sin(self.bg_time * 0.7))
+        b1 = int(50 + 20 * math.sin(self.bg_time * 0.3))
+        
+        r2 = int(20 + 10 * math.sin(self.bg_time * 0.4))
+        g2 = int(40 + 15 * math.sin(self.bg_time * 0.6))
+        b2 = int(20 + 10 * math.sin(self.bg_time * 0.8))
+        
+        # Draw gradient background
+        for y in range(self.height):
+            ratio = y / self.height
+            r = int(r1 * (1 - ratio) + r2 * ratio)
+            g = int(g1 * (1 - ratio) + g2 * ratio)
+            b = int(b1 * (1 - ratio) + b2 * ratio)
+            pygame.draw.line(self.screen, (r, g, b), (0, y), (self.width, y))
+        
+        # Add floating particles
+        for i in range(20):
+            particle_time = self.bg_time + i * 0.3
+            x = (50 + i * 45 + math.sin(particle_time * 0.5) * 30) % self.width
+            y = (100 + math.sin(particle_time * 0.3 + i) * 50) % self.height
+            alpha = int(50 + 30 * math.sin(particle_time * 0.7))
+            size = 2 + int(math.sin(particle_time + i) * 1)
+            
+            particle_surface = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(particle_surface, (255, 255, 255, alpha), (size, size), size)
+            self.screen.blit(particle_surface, (x - size, y - size))
+    
+    def draw_menu(self):
+        self.draw_animated_background()
+        
+        # Enhanced title with glow effect
+        title_text = "Memory Card Game"
+        title_main = self.font_large.render(title_text, True, (255, 255, 255))
+        title_glow = self.font_large.render(title_text, True, (100, 150, 255))
+        
+        title_rect = title_main.get_rect(center=(self.width // 2, 120))
+        glow_rect = title_glow.get_rect(center=(self.width // 2 + 2, 122))
+        
+        self.screen.blit(title_glow, glow_rect)
+        self.screen.blit(title_main, title_rect)
+        
+        # Animated subtitle
+        subtitle_alpha = int(180 + 75 * math.sin(self.bg_time * 2))
+        subtitle_surface = pygame.Surface((400, 30), pygame.SRCALPHA)
+        subtitle_text = self.font_small.render("Challenge your memory with friends!", True, (255, 255, 255, subtitle_alpha))
+        subtitle_rect = subtitle_text.get_rect(center=(200, 15))
+        subtitle_surface.blit(subtitle_text, subtitle_rect)
+        self.screen.blit(subtitle_surface, (self.width // 2 - 200, 150))
         
         self.create_game_btn.draw(self.screen, self.font_medium)
         
-        # Room ID input section between buttons
-        room_label = self.font_small.render("Room ID:", True, (255, 255, 255))
-        self.screen.blit(room_label, (350, 260))
+        # Enhanced room ID input section
+        room_bg = pygame.Surface((320, 80), pygame.SRCALPHA)
+        pygame.draw.rect(room_bg, (0, 0, 0, 100), (0, 0, 320, 80), border_radius=15)
+        pygame.draw.rect(room_bg, (100, 150, 255, 150), (0, 0, 320, 80), 3, border_radius=15)
+        self.screen.blit(room_bg, (340, 250 + 40))
+
+        room_label = self.font_small.render("Room ID:", True, (200, 220, 255))
+        self.screen.blit(room_label, (350, 260 + 40))
+
         self.room_input.draw(self.screen, self.font_small)
-        
+
         self.join_game_btn.draw(self.screen, self.font_medium)
         
-        # Instructions
-        instruction1 = self.font_small.render("Create a new game to select difficulty level", True, (200, 200, 200))
-        instruction1_rect = instruction1.get_rect(center=(self.width // 2, 450))
-        self.screen.blit(instruction1, instruction1_rect)
+        # Enhanced instructions with icons
+        instruction_y = 450
+        instructions = [
+            "🎮 Create a new game to select difficulty level",
+            "🔗 Or enter a Room ID above and click Join Game"
+        ]
         
-        instruction2 = self.font_small.render("Or enter a Room ID above and click Join Game", True, (200, 200, 200))
-        instruction2_rect = instruction2.get_rect(center=(self.width // 2, 475))
-        self.screen.blit(instruction2, instruction2_rect)
+        for i, instruction in enumerate(instructions):
+            color_intensity = int(200 + 55 * math.sin(self.bg_time + i * 0.5))
+            color = (color_intensity, color_intensity, color_intensity)
+            instruction_surface = self.font_small.render(instruction, True, color)
+            instruction_rect = instruction_surface.get_rect(center=(self.width // 2, instruction_y + i * 25))
+            self.screen.blit(instruction_surface, instruction_rect)
     
     def draw_level_select(self):
-        self.screen.fill((30, 30, 50))
+        self.draw_animated_background()
         
         self.back_btn.draw(self.screen, self.font_small)
         
+        # Enhanced title
         title = self.font_large.render("Select Difficulty", True, (255, 255, 255))
         title_rect = title.get_rect(center=(self.width // 2, 120))
         self.screen.blit(title, title_rect)
         
+        # Draw level buttons with enhanced styling
         self.easy_level_btn.draw(self.screen, self.font_medium)
         self.normal_level_btn.draw(self.screen, self.font_medium)
         
-        # Level descriptions
-        easy_desc1 = self.font_small.render("Easy Mode:", True, (255, 255, 255))
-        easy_desc2 = self.font_small.render("All cards shown for 3 seconds", True, (150, 255, 150))
-        easy_desc3 = self.font_small.render("at the start of the game", True, (150, 255, 150))
+        # Enhanced level descriptions with backgrounds
+        descriptions = [
+            ("Easy Mode", ["All cards shown for 3 ", "seconds at the start", "of the game"], (150, 255, 150), 330),
+            ("Normal Mode", ["No card previews", "Classic memory", "game"], (255, 150, 150), 570)
+        ]
+
         
-        normal_desc1 = self.font_small.render("Normal Mode:", True, (255, 255, 255))
-        normal_desc2 = self.font_small.render("No preview of cards", True, (255, 150, 150))
-        normal_desc3 = self.font_small.render("Classic memory game", True, (255, 150, 150))
-        
-        # Easy mode description
-        self.screen.blit(easy_desc1, (320, 300))
-        self.screen.blit(easy_desc2, (320, 325))
-        self.screen.blit(easy_desc3, (320, 350))
-        
-        # Normal mode description
-        self.screen.blit(normal_desc1, (520, 300))
-        self.screen.blit(normal_desc2, (520, 325))
-        self.screen.blit(normal_desc3, (520, 350))
+        for title_text, desc_lines, color, x_pos in descriptions:
+            # Description background
+            desc_bg = pygame.Surface((180, 120), pygame.SRCALPHA)
+            pygame.draw.rect(desc_bg, (0, 0, 0, 120), (0, 0, 180, 120), border_radius=10)
+            pygame.draw.rect(desc_bg, color + (100,), (0, 0, 180, 120), 2, border_radius=10)
+            self.screen.blit(desc_bg, (x_pos, 290))
+            
+            # Title
+            title_surface = self.font_small.render(title_text, True, (255, 255, 255))
+            self.screen.blit(title_surface, (x_pos + 10, 300))
+            
+            # Description lines
+            for i, line in enumerate(desc_lines):
+                line_surface = self.font_small.render(line, True, color)
+                self.screen.blit(line_surface, (x_pos + 10, 325 + i * 25))
     
     def draw_waiting(self):
-        self.screen.fill((30, 30, 50))
+        self.draw_animated_background()
         
         self.back_btn.draw(self.screen, self.font_small)
         
-        title = self.font_large.render("Waiting for Players", True, (255, 255, 255))
+        # Animated waiting title
+        waiting_scale = 1.0 + 0.1 * math.sin(self.bg_time * 3)
+        title_font = pygame.font.Font(None, int(48 * waiting_scale))
+        title = title_font.render("Waiting for Players", True, (255, 255, 255))
         title_rect = title.get_rect(center=(self.width // 2, 150))
         self.screen.blit(title, title_rect)
         
+        # Room ID display with enhanced styling
         if self.room_id:
+            room_bg = pygame.Surface((300, 60), pygame.SRCALPHA)
+            pygame.draw.rect(room_bg, (0, 0, 0, 150), (0, 0, 300, 60), border_radius=15)
+            pygame.draw.rect(room_bg, (100, 255, 100, 200), (0, 0, 300, 60), 3, border_radius=15)
+            self.screen.blit(room_bg, (self.width // 2 - 150, 200))
+            
             room_text = self.font_medium.render(f"Room ID: {self.room_id}", True, (255, 255, 255))
-            room_rect = room_text.get_rect(center=(self.width // 2, 220))
+            room_rect = room_text.get_rect(center=(self.width // 2, 230))
             self.screen.blit(room_text, room_rect)
         
-        # Show selected level
+        # Show selected level with styling
         if hasattr(self, 'game_state_data') and self.game_state_data:
             level = self.game_state_data.get('level', 'normal')
+            level_bg = pygame.Surface((200, 30), pygame.SRCALPHA)
+            pygame.draw.rect(level_bg, (100, 100, 255, 100), (0, 0, 200, 30), border_radius=10)
+            self.screen.blit(level_bg, (self.width // 2 - 100, 270))
+            
             level_text = self.font_small.render(f"Difficulty: {level.title()}", True, (200, 200, 255))
-            level_rect = level_text.get_rect(center=(self.width // 2, 250))
+            level_rect = level_text.get_rect(center=(self.width // 2, 285))
             self.screen.blit(level_text, level_rect)
         
-        y_offset = 300
-        for player_id, player_data in self.players.items():
+        # Player list with enhanced styling
+        y_offset = 320
+        for i, (player_id, player_data) in enumerate(self.players.items()):
+            player_bg = pygame.Surface((250, 35), pygame.SRCALPHA)
+            color_alpha = int(100 + 50 * math.sin(self.bg_time + i))
+            pygame.draw.rect(player_bg, (50, 150, 200, color_alpha), (0, 0, 250, 35), border_radius=8)
+            self.screen.blit(player_bg, (self.width // 2 - 125, y_offset - 5))
+            
             player_text = self.font_small.render(f"Player: {player_data['name']}", True, (255, 255, 255))
-            self.screen.blit(player_text, (400, y_offset))
-            y_offset += 30
+            player_rect = player_text.get_rect(center=(self.width // 2, y_offset + 10))
+            self.screen.blit(player_text, player_rect)
+            y_offset += 45
         
+        # Status messages with animation
+        status_y = 420
         if len(self.players) < 2:
-            instruction = self.font_small.render("Waiting for another player to join...", True, (200, 200, 200))
-            instruction_rect = instruction.get_rect(center=(self.width // 2, 400))
+            # Pulsing waiting message
+            pulse = 0.8 + 0.2 * math.sin(self.bg_time * 4)
+            waiting_color = (int(200 * pulse), int(200 * pulse), int(200 * pulse))
+            
+            instruction = self.font_small.render("Waiting for another player to join...", True, waiting_color)
+            instruction_rect = instruction.get_rect(center=(self.width // 2, status_y))
             self.screen.blit(instruction, instruction_rect)
             
             share_text = self.font_small.render("Share the Room ID with a friend!", True, (150, 150, 255))
-            share_rect = share_text.get_rect(center=(self.width // 2, 430))
+            share_rect = share_text.get_rect(center=(self.width // 2, status_y + 30))
             self.screen.blit(share_text, share_rect)
         else:
-            instruction = self.font_small.render("Game will start automatically when both players are ready!", True, (200, 200, 200))
-            instruction_rect = instruction.get_rect(center=(self.width // 2, 400))
+            ready_color = (100, 255, 100)
+            instruction = self.font_small.render("Game will start automatically when both players are ready!", True, ready_color)
+            instruction_rect = instruction.get_rect(center=(self.width // 2, status_y))
             self.screen.blit(instruction, instruction_rect)
     
     def draw_game(self):
-        self.screen.fill((20, 40, 20))
+        # Dynamic game background
+        bg_r = int(20 + 10 * math.sin(self.bg_time * 0.2))
+        bg_g = int(40 + 15 * math.sin(self.bg_time * 0.3))
+        bg_b = int(20 + 10 * math.sin(self.bg_time * 0.25))
+        self.screen.fill((bg_r, bg_g, bg_b))
         
         self.back_btn.draw(self.screen, self.font_small)
         
+        # Enhanced game title
         title = self.font_medium.render("Memory Card Game", True, (255, 255, 255))
+        title_glow = self.font_medium.render("Memory Card Game", True, (100, 200, 255))
+        self.screen.blit(title_glow, (self.width // 2 - 98, 22))
         self.screen.blit(title, (self.width // 2 - 100, 20))
         
-        # Show level in game
+        # Show level with enhanced styling
         if hasattr(self, 'game_state_data') and self.game_state_data:
             level = self.game_state_data.get('level', 'normal')
+            level_bg = pygame.Surface((120, 25), pygame.SRCALPHA)
+            pygame.draw.rect(level_bg, (100, 100, 255, 150), (0, 0, 120, 25), border_radius=8)
+            self.screen.blit(level_bg, (740, 20))
+            
             level_text = self.font_small.render(f"Level: {level.title()}", True, (200, 200, 255))
-            self.screen.blit(level_text, (750, 25))
+            self.screen.blit(level_text, (750, 27))
         
-        # Player scores
+        # Enhanced player scores with backgrounds
         x_offset = 50
         for player_id, player_data in self.players.items():
             name = player_data['name']
             score = player_data['score']
             is_turn = player_data['is_turn']
             
-            color = (255, 255, 100) if is_turn else (255, 255, 255)
             if player_id == self.player_id:
                 name += " (You)"
             
+            # Score background with turn indicator
+            score_width = 180
+            score_bg = pygame.Surface((score_width, 35), pygame.SRCALPHA)
+            
+            if is_turn:
+                # Animated turn indicator
+                turn_pulse = 0.7 + 0.3 * math.sin(self.bg_time * 6)
+                bg_color = (int(255 * turn_pulse), int(255 * turn_pulse), 100, 150)
+                border_color = (255, 255, 100)
+            else:
+                bg_color = (50, 50, 100, 100)
+                border_color = (100, 100, 150)
+            
+            pygame.draw.rect(score_bg, bg_color, (0, 0, score_width, 35), border_radius=10)
+            pygame.draw.rect(score_bg, border_color, (0, 0, score_width, 35), 2, border_radius=10)
+            self.screen.blit(score_bg, (x_offset, 60))
+            
+            color = (255, 255, 100) if is_turn else (255, 255, 255)
             score_text = self.font_small.render(f"{name}: {score}", True, color)
-            self.screen.blit(score_text, (x_offset, 70))
+            self.screen.blit(score_text, (x_offset + 10, 70))
             x_offset += 200
         
-        # Current turn indicator
+        # Enhanced current turn indicator
         if self.current_player:
             current_name = self.players.get(self.current_player, {}).get('name', 'Unknown')
             if self.current_player == self.player_id:
                 turn_text = "Your turn!"
                 color = (100, 255, 100)
+                # Add pulsing effect for current player
+                pulse = 0.8 + 0.2 * math.sin(self.bg_time * 5)
+                color = (int(100 * pulse), int(255 * pulse), int(100 * pulse))
             else:
-                turn_text = f"{current_name}'s turn"
+                turn_text = f" {current_name}'s turn"
                 color = (255, 100, 100)
             
+            # Turn indicator background
+            turn_bg = pygame.Surface((250, 30), pygame.SRCALPHA)
+            pygame.draw.rect(turn_bg, (0, 0, 0, 120), (0, 0, 250, 30), border_radius=10)
+            pygame.draw.rect(turn_bg, color + (150,), (0, 0, 250, 30), 2, border_radius=10)
+            self.screen.blit(turn_bg, (self.width // 2 - 125, 105))
+            
             turn_surface = self.font_small.render(turn_text, True, color)
-            turn_rect = turn_surface.get_rect(center=(self.width // 2, 110))
+            turn_rect = turn_surface.get_rect(center=(self.width // 2, 120))
             self.screen.blit(turn_surface, turn_rect)
         
-        # Draw cards
+        # Draw cards with enhanced effects
         for card in self.cards:
             card.draw(self.screen)
     
     def draw_finished(self):
-        self.screen.fill((30, 30, 50))
+        self.draw_animated_background()
         
         self.back_btn.draw(self.screen, self.font_small)
         
-        title = self.font_large.render("Game Finished!", True, (255, 255, 255))
+        # Animated victory title
+        victory_scale = 1.0 + 0.15 * math.sin(self.bg_time * 2)
+        victory_font = pygame.font.Font(None, int(48 * victory_scale))
+        title = victory_font.render("🎉 Game Finished! 🎉", True, (255, 255, 100))
         title_rect = title.get_rect(center=(self.width // 2, 150))
+        
+        # Title glow effect
+        title_glow = victory_font.render("🎉 Game Finished! 🎉", True, (255, 200, 0))
+        glow_rect = title_glow.get_rect(center=(self.width // 2 + 3, 153))
+        self.screen.blit(title_glow, glow_rect)
         self.screen.blit(title, title_rect)
         
+        # Enhanced results display
         y_offset = 250
         scores = [(pid, data['score']) for pid, data in self.players.items()]
         scores.sort(key=lambda x: x[1], reverse=True)
@@ -579,22 +970,74 @@ class MemoryCardGame:
             if player_id == self.player_id:
                 name += " (You)"
             
-            position = "Winner!" if i == 0 else f"Rank {i + 1}"
-            color = (255, 255, 100) if i == 0 else (255, 255, 255)
+            # Result background with rank-based styling
+            result_width = 400
+            result_bg = pygame.Surface((result_width, 50), pygame.SRCALPHA)
             
-            score_text = self.font_medium.render(f"{name}: {score} pairs - {position}", True, color)
-            score_rect = score_text.get_rect(center=(self.width // 2, y_offset))
+            if i == 0:  # Winner
+                bg_color = (255, 215, 0, 150)  # Gold
+                border_color = (255, 255, 0)
+                position = "👑 Winner!"
+                text_color = (255, 255, 100)
+                # Add winner sparkle effect
+                sparkle_alpha = int(100 + 100 * math.sin(self.bg_time * 8))
+                sparkle_color = (255, 255, 255, sparkle_alpha)
+            else:
+                bg_color = (100, 100, 150, 100)  # Silver
+                border_color = (150, 150, 200)
+                position = f"Rank {i + 1}"
+                text_color = (255, 255, 255)
+            
+            pygame.draw.rect(result_bg, bg_color, (0, 0, result_width, 50), border_radius=15)
+            pygame.draw.rect(result_bg, border_color, (0, 0, result_width, 50), 3, border_radius=15)
+            
+            if i == 0:  # Add sparkles for winner
+                for j in range(5):
+                    sparkle_x = 20 + j * 70 + int(math.sin(self.bg_time * 4 + j) * 10)
+                    sparkle_y = 25 + int(math.cos(self.bg_time * 6 + j) * 5)
+                    pygame.draw.circle(result_bg, sparkle_color, (sparkle_x, sparkle_y), 2)
+            
+            self.screen.blit(result_bg, (self.width // 2 - result_width // 2, y_offset))
+            
+            score_text = self.font_medium.render(f"{name}: {score} pairs - {position}", True, text_color)
+            score_rect = score_text.get_rect(center=(self.width // 2, y_offset + 25))
             self.screen.blit(score_text, score_rect)
-            y_offset += 50
+            y_offset += 70
+        
+        # Play again hint
+        hint_alpha = int(150 + 105 * math.sin(self.bg_time * 3))
+        hint_surface = pygame.Surface((350, 25), pygame.SRCALPHA)
+        hint_text = self.font_small.render("Click 'Back' to return to menu and play again!", True, (255, 255, 255, hint_alpha))
+        hint_rect = hint_text.get_rect(center=(175, 12))
+        hint_surface.blit(hint_text, hint_rect)
+        self.screen.blit(hint_surface, (self.width // 2 - 175, y_offset + 20))
     
     def draw_status(self):
         if self.status_message and self.status_timer > 0:
-            status_surface = self.font_small.render(self.status_message, True, (255, 255, 100))
+            # Enhanced status message with animation
+            status_alpha = min(255, self.status_timer // 10)
+            status_scale = 1.0 + 0.1 * math.sin(self.bg_time * 6)
+            
+            status_font = pygame.font.Font(None, int(24 * status_scale))
+            status_surface = status_font.render(self.status_message, True, (255, 255, 100))
             status_rect = status_surface.get_rect(center=(self.width // 2, self.height - 50))
             
-            bg_rect = status_rect.inflate(20, 10)
-            pygame.draw.rect(self.screen, (50, 50, 50), bg_rect)
-            pygame.draw.rect(self.screen, (255, 255, 100), bg_rect, 2)
+            # Status background with glow
+            bg_width = status_rect.width + 40
+            bg_height = status_rect.height + 20
+            bg_rect = pygame.Rect(status_rect.centerx - bg_width // 2, 
+                                status_rect.centery - bg_height // 2, 
+                                bg_width, bg_height)
+            
+            # Outer glow
+            glow_surface = pygame.Surface((bg_width + 20, bg_height + 20), pygame.SRCALPHA)
+            pygame.draw.rect(glow_surface, (255, 255, 100, 50), 
+                           (0, 0, bg_width + 20, bg_height + 20), border_radius=15)
+            self.screen.blit(glow_surface, (bg_rect.x - 10, bg_rect.y - 10))
+            
+            # Main background
+            pygame.draw.rect(self.screen, (50, 50, 50, 200), bg_rect, border_radius=10)
+            pygame.draw.rect(self.screen, (255, 255, 100), bg_rect, 2, border_radius=10)
             
             self.screen.blit(status_surface, status_rect)
             self.status_timer -= self.clock.get_time()
@@ -625,6 +1068,7 @@ class MemoryCardGame:
         self.client.disconnect()
         pygame.quit()
         sys.exit()
+
 
 if __name__ == "__main__":
     game = MemoryCardGame()
