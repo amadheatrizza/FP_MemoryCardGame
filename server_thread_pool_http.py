@@ -5,7 +5,7 @@ import sys
 import logging
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
-from http import GameServer
+from https import GameServer
 
 server = GameServer()
 
