@@ -21,7 +21,7 @@ class GameState(Enum):
     FINISHED = "finished"
 
 class NetworkClient:
-    def __init__(self, host='localhost', port=8001):
+    def __init__(self, host='localhost', port=8002):
         self.host = host
         self.port = port
         self.socket = None
