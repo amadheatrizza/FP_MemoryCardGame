@@ -19,79 +19,7 @@ class GameState(Enum):
     WAITING = "waiting"
     PLAYING = "playing"
     FINISHED = "finished"
-
-class NetworkClient:
-    def __init__(self, host='localhost', port=8002):
-        self.host = host
-        self.port = port
-        self.socket = None
-        self.connected = False
-        self.player_id = None
-        self.room_id = None
-        self.message_queue = []
-        self.running = False
-        
-    def connect(self):
-        try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect((self.host, self.port))
-            self.connected = True
-            self.running = True
-            listen_thread = threading.Thread(target=self._listen_for_messages)
-            listen_thread.daemon = True
-            listen_thread.start()
-            logger.info("Connected to server")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect: {e}")
-            return False
     
-    def _listen_for_messages(self):
-        buffer = ""
-        while self.running and self.connected:
-            try:
-                data = self.socket.recv(1024).decode()
-                if not data:
-                    break
-                
-                buffer += data
-                while '\n' in buffer:
-                    line, buffer = buffer.split('\n', 1)
-                    if line.strip():
-                        try:
-                            message = json.loads(line.strip())
-                            self.message_queue.append(message)
-                        except json.JSONDecodeError:
-                            logger.error(f"Invalid JSON received: {line}")
-                            
-            except Exception as e:
-                logger.error(f"Error receiving message: {e}")
-                break
-        
-        self.connected = False
-    
-    def send_message(self, message: Dict):
-        if self.connected:
-            try:
-                json_message = json.dumps(message)
-                self.socket.send(f"{json_message}\n".encode())
-                return True
-            except Exception as e:
-                logger.error(f"Error sending message: {e}")
-                self.connected = False
-        return False
-    
-    def get_messages(self):
-        messages = self.message_queue.copy()
-        self.message_queue.clear()
-        return messages
-    
-    def disconnect(self):
-        self.running = False
-        self.connected = False
-        if self.socket:
-            self.socket.close()
-
 class Card:
     def __init__(self, card_id: int, x: int, y: int, width: int, height: int):
         self.id = card_id
@@ -104,7 +32,6 @@ class Card:
         self.matched = False
         self.rect = pygame.Rect(x, y, width, height)
         
-        # Animation properties
         self.flip_progress = 0.0  # 0.0 = face down, 1.0 = face up
         self.target_flip = 0.0
         self.bounce_offset = 0.0
@@ -117,7 +44,6 @@ class Card:
         self.glow_intensity = 0.0
         self.match_celebration_timer = 0.0
         
-        # Enhanced color palette with gradients
         self.colors = {
             'card_0': [(255, 120, 120), (220, 80, 80)],   # Red gradient
             'card_1': [(120, 255, 120), (80, 220, 80)],   # Green gradient
@@ -129,7 +55,6 @@ class Card:
             'card_7': [(180, 120, 255), (140, 80, 220)],  # Purple gradient
         }
         
-        # Card back gradient
         self.back_color = [(70, 70, 180), (40, 40, 120)]
     
     def update(self, card_data: Dict, dt: float):
@@ -140,13 +65,11 @@ class Card:
         self.revealed = card_data.get('revealed', False)
         self.matched = card_data.get('matched', False)
         
-        # Update flip animation
         if self.revealed or self.matched:
             self.target_flip = 1.0
         else:
             self.target_flip = 0.0
         
-        # Smooth flip animation
         flip_speed = 8.0
         if abs(self.flip_progress - self.target_flip) > 0.01:
             if self.flip_progress < self.target_flip:
@@ -154,7 +77,6 @@ class Card:
             else:
                 self.flip_progress = max(0.0, self.flip_progress - flip_speed * dt)
         
-        # Bounce effect when revealed
         if self.revealed and not old_revealed:
             self.bounce_timer = 0.5
         
@@ -165,7 +87,6 @@ class Card:
         else:
             self.bounce_offset = 0
         
-        # Match celebration
         if self.matched and not old_matched:
             self.match_celebration_timer = 1.0
             self.target_scale = 1.2
@@ -175,7 +96,6 @@ class Card:
             if self.match_celebration_timer <= 0:
                 self.target_scale = 1.0
         
-        # Scale animation
         scale_speed = 5.0
         if abs(self.scale - self.target_scale) > 0.01:
             if self.scale < self.target_scale:
@@ -183,7 +103,6 @@ class Card:
             else:
                 self.scale = max(self.target_scale, self.scale - scale_speed * dt)
         
-        # Shake effect for mismatched cards
         if self.shake_timer > 0:
             self.shake_timer -= dt
             shake_intensity = self.shake_timer / 0.3
@@ -193,7 +112,6 @@ class Card:
             self.shake_offset_x = 0
             self.shake_offset_y = 0
         
-        # Glow effect for current turn
         if self.glow_intensity > 0:
             self.glow_intensity = max(0, self.glow_intensity - dt * 2)
     
@@ -204,8 +122,6 @@ class Card:
         self.glow_intensity = 1.0
     
     def draw_gradient_rect(self, surface, color1, color2, rect, corner_radius=15):
-        """Draw a rounded rectangle with gradient"""
-        # Create a temporary surface for the gradient
         temp_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
         
         for y in range(max(1, rect.height)):
@@ -215,23 +131,18 @@ class Card:
             b = int(color1[2] * (1 - ratio) + color2[2] * ratio)
             pygame.draw.line(temp_surface, (r, g, b), (0, y), (rect.width, y))
         
-        # Create rounded rect mask
         mask_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
         pygame.draw.rect(mask_surface, (255, 255, 255, 255), 
                         (0, 0, rect.width, rect.height), border_radius=corner_radius)
         
-        # Apply mask to gradient
         temp_surface.blit(mask_surface, (0, 0), special_flags=pygame.BLEND_ALPHA_SDL2)
         
-        # Blit to main surface
         surface.blit(temp_surface, rect.topleft)
     
     def draw(self, screen):
-        # Calculate animated position and size
         animated_x = self.x + self.shake_offset_x
         animated_y = self.y + self.shake_offset_y - self.bounce_offset
         
-        # Calculate scaled dimensions
         scaled_width = int(self.width * self.scale)
         scaled_height = int(self.height * self.scale)
         scaled_x = animated_x + (self.width - scaled_width) // 2
@@ -239,7 +150,6 @@ class Card:
         
         animated_rect = pygame.Rect(scaled_x, scaled_y, scaled_width, scaled_height)
         
-        # Draw glow effect
         if self.glow_intensity > 0:
             glow_surface = pygame.Surface((scaled_width + 20, scaled_height + 20), pygame.SRCALPHA)
             glow_color = (255, 255, 100, int(50 * self.glow_intensity))
@@ -247,7 +157,6 @@ class Card:
                            (0, 0, scaled_width + 20, scaled_height + 20), border_radius=25)
             screen.blit(glow_surface, (scaled_x - 10, scaled_y - 10))
         
-        # Calculate flip effect (3D-like perspective)
         flip_scale_x = abs(math.cos(self.flip_progress * math.pi))
         if flip_scale_x < 0.1:
             flip_scale_x = 0.1
@@ -256,11 +165,9 @@ class Card:
         flip_x = scaled_x + (scaled_width - flip_width) // 2
         flip_rect = pygame.Rect(flip_x, scaled_y, flip_width, scaled_height)
         
-        # Determine if we should show front or back
         show_front = self.flip_progress > 0.5
         
         if show_front and (self.revealed or self.matched):
-            # Draw card front
             if self.value in self.colors:
                 color1, color2 = self.colors[self.value]
             else:
@@ -268,22 +175,18 @@ class Card:
             
             self.draw_gradient_rect(screen, color1, color2, flip_rect, 15)
             
-            # Draw border
             border_color = (255, 255, 255) if not self.matched else (0, 255, 0)
             pygame.draw.rect(screen, border_color, flip_rect, 3, border_radius=15)
             
-            # Draw symbol in center
             center_x = flip_rect.centerx
             center_y = flip_rect.centery
             symbol_radius = min(20, flip_width // 4)
             
-            # White circle background
             pygame.draw.circle(screen, (255, 255, 255), (center_x, center_y), symbol_radius + 5)
             pygame.draw.circle(screen, (0, 0, 0), (center_x, center_y), symbol_radius + 5, 2)
             
-            # Draw value-specific symbol
             if self.value:
-                symbol_color = color2  # Use darker gradient color
+                symbol_color = color2
                 pygame.draw.circle(screen, symbol_color, (center_x, center_y), symbol_radius)
             
             # Match checkmark
@@ -409,23 +312,125 @@ class InputBox:
         self.cursor_timer += dt
     
     def draw(self, screen, font):
-        # Draw input box with rounded corners
         pygame.draw.rect(screen, self.color, self.rect, border_radius=8)
         pygame.draw.rect(screen, (200, 200, 200), self.rect, 2, border_radius=8)
         
-        # Draw text or placeholder
         display_text = self.text if self.text else self.placeholder
         text_color = (255, 255, 255) if self.text else (150, 150, 150)
         text_surface = font.render(display_text, True, text_color)
         text_y = self.rect.y + (self.rect.height - text_surface.get_height()) // 2
         screen.blit(text_surface, (self.rect.x + 10, text_y))
         
-        # Draw cursor when active
         if self.active and self.cursor_timer % 1.0 < 0.5:
             cursor_x = self.rect.x + 10 + font.size(self.text)[0]
             cursor_y = self.rect.y + 5
             pygame.draw.line(screen, (255, 255, 255), 
                            (cursor_x, cursor_y), (cursor_x, cursor_y + self.rect.height - 10), 2)
+
+class NetworkClient:
+    def __init__(self, host='localhost', port=8002):
+        self.host = host
+        self.port = port
+        self.player_id = None
+        self.room_id = None
+        self.game_state_data = None
+        
+    def send_http_request(self, path: str, data: Dict) -> Dict:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((self.host, self.port))
+            
+            json_data = json.dumps(data)
+            request = f"POST {path} HTTP/1.1\r\n"
+            request += f"Host: {self.host}:{self.port}\r\n"
+            request += "Content-Type: application/json\r\n"
+            request += f"Content-Length: {len(json_data)}\r\n"
+            request += "Connection: close\r\n"
+            request += "\r\n"
+            request += json_data
+            
+            sock.send(request.encode())
+            
+            response = b""
+            while True:
+                data = sock.recv(1024)
+                if not data:
+                    break
+                response += data
+            
+            sock.close()
+            
+            response_str = response.decode()
+            if "\r\n\r\n" in response_str:
+                headers, body = response_str.split("\r\n\r\n", 1)
+                if body:
+                    return json.loads(body)
+            
+            return {"success": False, "error": "Invalid response"}
+            
+        except Exception as e:
+            logger.error(f"HTTP request error: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def create_room(self, level: str = "normal", player_name: str = "Player") -> Dict:
+        response = self.send_http_request("/create_room", {
+            "level": level,
+            "player_name": player_name
+        })
+        
+        if response.get("success"):
+            self.player_id = response.get("player_id")
+            self.room_id = response.get("room_id")
+            
+        return response
+    
+    def join_room(self, room_id: str, player_name: str = "Player") -> Dict:
+        response = self.send_http_request("/join_room", {
+            "room_id": room_id,
+            "player_name": player_name
+        })
+        
+        if response.get("success"):
+            self.player_id = response.get("player_id")
+            self.room_id = response.get("room_id")
+            
+        return response
+    
+    def reveal_card(self, card_id: int) -> Dict:
+        if not self.player_id:
+            return {"success": False, "error": "Not connected"}
+            
+        return self.send_http_request("/reveal_card", {
+            "player_id": self.player_id,
+            "card_id": card_id
+        })
+    
+    def get_game_state(self) -> Dict:
+        if not self.player_id:
+            return {"success": False, "error": "Not connected"}
+            
+        return self.send_http_request("/game_state", {
+            "player_id": self.player_id
+        })
+    
+    def poll_game_state(self):
+        while hasattr(self, 'polling') and self.polling:
+            try:
+                response = self.get_game_state()
+                if response.get("success"):
+                    self.game_state_data = response.get("game_state")
+                time.sleep(0.25)  # Poll every 0.25 second
+            except Exception as e:
+                logger.error(f"Polling error: {e}")
+                time.sleep(1)
+    
+    def start_polling(self):
+        self.polling = True
+        self.poll_thread = threading.Thread(target=self.poll_game_state, daemon=True)
+        self.poll_thread.start()
+    
+    def stop_polling(self):
+        self.polling = False
 
 class MemoryCardGame:
     def __init__(self):
@@ -446,46 +451,34 @@ class MemoryCardGame:
         self.client = NetworkClient()
         
         self.cards = []
-        self.game_state_data = None
-        self.player_id = None
-        self.room_id = None
         self.players = {}
         self.current_player = None
-        self.selected_level = "normal"  # Default level
+        self.selected_level = "normal"
         
         self.create_ui_elements()
         
         self.status_message = ""
         self.status_timer = 0
-        
-        # Background animation
+
         self.bg_time = 0
         
-
+        # Polling timer for game state
+        self.last_poll_time = 0
+        self.poll_interval = 0.25  # Poll every 0.25 second
+        
     def create_ui_elements(self):
-        # Main menu buttons - better positioning to match visual layout
         self.create_game_btn = Button(350, 200, 300, 50, "Create New Game", (70, 130, 180))
         
-        # Room input - positioned to match the visual background in draw_menu
         self.room_input = InputBox(350, 275 + 50, 300, 35, "Enter Room ID")
         
-        # Join button - positioned after room input with proper spacing
         self.join_game_btn = Button(350, 320 + 60, 300, 50, "Join Game", (100, 150, 100))
         
-        # Level selection buttons with distinct colors - better spacing
         self.easy_level_btn = Button(330, 200, 200, 80, "Easy", (100, 200, 100))
         self.normal_level_btn = Button(570, 200, 200, 80, "Normal", (200, 100, 100))
         
-        # Game control buttons
         self.start_btn = Button(400, 500, 200, 50, "Start Game", (180, 70, 70))
-        self.back_btn = Button(50, 50, 100, 40, "Back", (120, 120, 120))  
-    def connect_to_server(self):
-        if not self.client.connected:
-            if not self.client.connect():
-                self.show_status("Failed to connect to server!")
-                return False
-        return True
-    
+        self.back_btn = Button(50, 50, 100, 40, "Back", (120, 120, 120))
+
     def show_status(self, message: str, duration: int = 3000):
         self.status_message = message
         self.status_timer = duration
@@ -511,45 +504,22 @@ class MemoryCardGame:
             card = Card(i, x, y, card_width, card_height)
             self.cards.append(card)
     
-    def handle_server_messages(self):
-        messages = self.client.get_messages()
-        for message in messages:
-            self.process_server_message(message)
-    
-    def process_server_message(self, message: Dict):
-        if message.get('success'):
-            if 'room_id' in message:
-                self.room_id = message['room_id']
-                self.player_id = message['player_id']
-                
-            if 'game_state' in message:
-                self.update_game_state(message['game_state'])
-                
-        elif message.get('type') == 'player_joined':
-            self.update_game_state(message['game_state'])
-            self.show_status("Player joined!")
+    def update_game_state(self):
+        """Poll for game state updates"""
+        current_time = time.time()
+        if current_time - self.last_poll_time >= self.poll_interval:
+            self.last_poll_time = current_time
             
-        elif message.get('type') == 'game_update':
-            self.update_game_state(message['game_state'])
-            result = message.get('result', {})
-            if 'match' in result:
-                if result['match']:
-                    self.show_status("Match found!")
-                    # Trigger celebration on matched cards
-                    for card in self.cards:
-                        if card.revealed and card.matched:
-                            card.match_celebration_timer = 1.0
-                else:
-                    self.show_status("No match. Turn switches.")
-                    # Trigger shake on mismatched cards
-                    for card in self.cards:
-                        if card.revealed and not card.matched:
-                            card.trigger_shake()
-        else:
-            self.show_status(message.get('message', 'Unknown error'))
+            if self.client.player_id:
+                response = self.client.get_game_state()
+                if response.get("success"):
+                    game_state = response.get("game_state")
+                    self.process_game_state(game_state)
     
-    def update_game_state(self, game_state: Dict):
-        self.game_state_data = game_state
+    def process_game_state(self, game_state: Dict):
+        if not game_state:
+            return
+            
         self.players = game_state.get('players', {})
         self.current_player = game_state.get('current_player')
         
@@ -560,14 +530,18 @@ class MemoryCardGame:
         dt = self.clock.get_time() / 1000.0
         for i, card_data in enumerate(cards_data):
             if i < len(self.cards):
+                old_revealed = self.cards[i].revealed
+                old_matched = self.cards[i].matched
+                
                 self.cards[i].update(card_data, dt)
+                
+                # Trigger animations based on state changes
+                if card_data.get('matched') and not old_matched:
+                    self.cards[i].match_celebration_timer = 1.0
+                elif card_data.get('revealed') != old_revealed and not card_data.get('revealed'):
+                    self.cards[i].trigger_shake()
         
-        # Trigger glow effect for current player's turn
-        if self.current_player == self.player_id:
-            for card in self.cards:
-                if not card.revealed and not card.matched:
-                    card.trigger_glow()
-        
+        # Update game state
         if game_state.get('state') == 'in_progress':
             self.state = GameState.PLAYING
         elif game_state.get('state') == 'finished':
@@ -585,11 +559,9 @@ class MemoryCardGame:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 self.handle_mouse_click(event.pos)
             
-            # Handle input box events in menu
             if self.state == GameState.MENU:
                 self.room_input.handle_event(event)
         
-        # Update button hover states with delta time
         mouse_pos = pygame.mouse.get_pos()
         self.create_game_btn.update(mouse_pos, dt)
         self.join_game_btn.update(mouse_pos, dt)
@@ -601,9 +573,11 @@ class MemoryCardGame:
         if self.state == GameState.MENU:
             self.room_input.update(dt)
         
-        # Update card animations
         for card in self.cards:
             card.update({'value': card.value, 'revealed': card.revealed, 'matched': card.matched}, dt)
+        
+        if self.status_timer > 0:
+            self.status_timer -= dt * 1000
     
     def handle_mouse_click(self, pos: Tuple[int, int]):
         if self.state == GameState.MENU:
@@ -612,70 +586,79 @@ class MemoryCardGame:
             
             elif self.join_game_btn.is_clicked(pos):
                 room_id = self.room_input.text.strip()
-                if room_id and self.connect_to_server():
-                    self.client.send_message({
-                        'action': 'join_room', 
-                        'room_id': room_id,
-                        'player_name': 'Player'
-                    })
-                    self.state = GameState.WAITING
+                if room_id:
+                    response = self.client.join_room(room_id, "Player")
+                    if response.get("success"):
+                        self.show_status(f"Joined room {room_id}")
+                        self.state = GameState.WAITING
+                        if 'game_state' in response:
+                          self.process_game_state(response['game_state'])
                 else:
-                    self.show_status("Please enter a valid Room ID")
-        
+                    self.show_status(response.get("error", "Failed to create room"))
+
+            
+            elif self.back_btn.is_clicked(pos):
+                self.state = GameState.MENU
+
         elif self.state == GameState.LEVEL_SELECT:
             if self.easy_level_btn.is_clicked(pos):
-                self.selected_level = "easy"
-                if self.connect_to_server():
-                    self.client.send_message({
-                        'action': 'create_room', 
-                        'player_name': 'Player',
-                        'level': 'easy'
-                    })
-                    self.state = GameState.WAITING
-            
+                self.selected_level = "easy" 
+                response = self.client.create_room(self.selected_level, "Player")
+                if response.get("success"):
+                    self.state = GameState.WAITING           
             elif self.normal_level_btn.is_clicked(pos):
                 self.selected_level = "normal"
-                if self.connect_to_server():
-                    self.client.send_message({
-                        'action': 'create_room', 
-                        'player_name': 'Player',
-                        'level': 'normal'
-                    })
+                response = self.client.create_room(self.selected_level, "Player")
+                if response.get("success"):
                     self.state = GameState.WAITING
-            
             elif self.back_btn.is_clicked(pos):
                 self.state = GameState.MENU
         
         elif self.state == GameState.WAITING:
             if self.back_btn.is_clicked(pos):
                 self.state = GameState.MENU
-                self.client.disconnect()
+                self.client.player_id = None
+                self.client.room_id = None
         
         elif self.state == GameState.PLAYING:
             if self.back_btn.is_clicked(pos):
                 self.state = GameState.MENU
-                self.client.disconnect()
+                self.client.player_id = None
+                self.client.room_id = None
                 return
             
-            if self.current_player == self.player_id:
+            if self.current_player == self.client.player_id:
                 for card in self.cards:
                     if card.is_clicked(pos) and not card.revealed and not card.matched:
-                        self.client.send_message({
-                            'action': 'reveal_card',
-                            'card_id': card.id
-                        })
+                        response = self.client.reveal_card(card.id)
+                        if response.get("success"):
+                            if 'game_state' in response:
+                                self.process_game_state(response['game_state'])
+                            
+                            if 'match' in response:
+                                if response['match']:
+                                    self.show_status("Match found!")
+                                    for c in self.cards:
+                                        if c.revealed and c.matched:
+                                            c.match_celebration_timer = 1.0
+                                else:
+                                    self.show_status("No match. Turn switches.")
+                                    for c in self.cards:
+                                        if c.revealed and not c.matched:
+                                            c.trigger_shake()
+                        else:
+                            self.show_status(response.get("message", "Invalid move"))
                         break
         
         elif self.state == GameState.FINISHED:
             if self.back_btn.is_clicked(pos):
                 self.state = GameState.MENU
-                self.client.disconnect()
+                self.client.player_id = None
+                self.client.room_id = None
     
     def draw_animated_background(self):
-        """Draw animated gradient background"""
         self.bg_time += self.clock.get_time() / 1000.0
         
-        # Create animated gradient colors
         r1 = int(30 + 15 * math.sin(self.bg_time * 0.5))
         g1 = int(30 + 15 * math.sin(self.bg_time * 0.7))
         b1 = int(50 + 20 * math.sin(self.bg_time * 0.3))
@@ -684,7 +667,6 @@ class MemoryCardGame:
         g2 = int(40 + 15 * math.sin(self.bg_time * 0.6))
         b2 = int(20 + 10 * math.sin(self.bg_time * 0.8))
         
-        # Draw gradient background
         for y in range(self.height):
             ratio = y / self.height
             r = int(r1 * (1 - ratio) + r2 * ratio)
@@ -692,7 +674,6 @@ class MemoryCardGame:
             b = int(b1 * (1 - ratio) + b2 * ratio)
             pygame.draw.line(self.screen, (r, g, b), (0, y), (self.width, y))
         
-        # Add floating particles
         for i in range(20):
             particle_time = self.bg_time + i * 0.3
             x = (50 + i * 45 + math.sin(particle_time * 0.5) * 30) % self.width
@@ -707,7 +688,6 @@ class MemoryCardGame:
     def draw_menu(self):
         self.draw_animated_background()
         
-        # Enhanced title with glow effect
         title_text = "Memory Card Game"
         title_main = self.font_large.render(title_text, True, (255, 255, 255))
         title_glow = self.font_large.render(title_text, True, (100, 150, 255))
@@ -718,7 +698,6 @@ class MemoryCardGame:
         self.screen.blit(title_glow, glow_rect)
         self.screen.blit(title_main, title_rect)
         
-        # Animated subtitle
         subtitle_alpha = int(180 + 75 * math.sin(self.bg_time * 2))
         subtitle_surface = pygame.Surface((400, 30), pygame.SRCALPHA)
         subtitle_text = self.font_small.render("Challenge your memory with friends!", True, (255, 255, 255, subtitle_alpha))
@@ -728,7 +707,6 @@ class MemoryCardGame:
         
         self.create_game_btn.draw(self.screen, self.font_medium)
         
-        # Enhanced room ID input section
         room_bg = pygame.Surface((320, 80), pygame.SRCALPHA)
         pygame.draw.rect(room_bg, (0, 0, 0, 100), (0, 0, 320, 80), border_radius=15)
         pygame.draw.rect(room_bg, (100, 150, 255, 150), (0, 0, 320, 80), 3, border_radius=15)
@@ -741,7 +719,6 @@ class MemoryCardGame:
 
         self.join_game_btn.draw(self.screen, self.font_medium)
         
-        # Enhanced instructions with icons
         instruction_y = 450
         instructions = [
             "🎮 Create a new game to select difficulty level",
@@ -760,16 +737,13 @@ class MemoryCardGame:
         
         self.back_btn.draw(self.screen, self.font_small)
         
-        # Enhanced title
         title = self.font_large.render("Select Difficulty", True, (255, 255, 255))
         title_rect = title.get_rect(center=(self.width // 2, 120))
         self.screen.blit(title, title_rect)
         
-        # Draw level buttons with enhanced styling
         self.easy_level_btn.draw(self.screen, self.font_medium)
         self.normal_level_btn.draw(self.screen, self.font_medium)
         
-        # Enhanced level descriptions with backgrounds
         descriptions = [
             ("Easy Mode", ["All cards shown for 3 ", "seconds at the start", "of the game"], (150, 255, 150), 330),
             ("Normal Mode", ["No card previews", "Classic memory", "game"], (255, 150, 150), 570)
@@ -777,17 +751,14 @@ class MemoryCardGame:
 
         
         for title_text, desc_lines, color, x_pos in descriptions:
-            # Description background
             desc_bg = pygame.Surface((180, 120), pygame.SRCALPHA)
             pygame.draw.rect(desc_bg, (0, 0, 0, 120), (0, 0, 180, 120), border_radius=10)
             pygame.draw.rect(desc_bg, color + (100,), (0, 0, 180, 120), 2, border_radius=10)
             self.screen.blit(desc_bg, (x_pos, 290))
             
-            # Title
             title_surface = self.font_small.render(title_text, True, (255, 255, 255))
             self.screen.blit(title_surface, (x_pos + 10, 300))
             
-            # Description lines
             for i, line in enumerate(desc_lines):
                 line_surface = self.font_small.render(line, True, color)
                 self.screen.blit(line_surface, (x_pos + 10, 325 + i * 25))
@@ -797,25 +768,22 @@ class MemoryCardGame:
         
         self.back_btn.draw(self.screen, self.font_small)
         
-        # Animated waiting title
         waiting_scale = 1.0 + 0.1 * math.sin(self.bg_time * 3)
         title_font = pygame.font.Font(None, int(48 * waiting_scale))
         title = title_font.render("Waiting for Players", True, (255, 255, 255))
         title_rect = title.get_rect(center=(self.width // 2, 150))
         self.screen.blit(title, title_rect)
         
-        # Room ID display with enhanced styling
-        if self.room_id:
+        if self.client.room_id:
             room_bg = pygame.Surface((300, 60), pygame.SRCALPHA)
             pygame.draw.rect(room_bg, (0, 0, 0, 150), (0, 0, 300, 60), border_radius=15)
             pygame.draw.rect(room_bg, (100, 255, 100, 200), (0, 0, 300, 60), 3, border_radius=15)
             self.screen.blit(room_bg, (self.width // 2 - 150, 200))
             
-            room_text = self.font_medium.render(f"Room ID: {self.room_id}", True, (255, 255, 255))
+            room_text = self.font_medium.render(f"Room ID: {self.client.room_id}", True, (255, 255, 255))
             room_rect = room_text.get_rect(center=(self.width // 2, 230))
             self.screen.blit(room_text, room_rect)
         
-        # Show selected level with styling
         if hasattr(self, 'game_state_data') and self.game_state_data:
             level = self.game_state_data.get('level', 'normal')
             level_bg = pygame.Surface((200, 30), pygame.SRCALPHA)
@@ -826,7 +794,6 @@ class MemoryCardGame:
             level_rect = level_text.get_rect(center=(self.width // 2, 285))
             self.screen.blit(level_text, level_rect)
         
-        # Player list with enhanced styling
         y_offset = 320
         for i, (player_id, player_data) in enumerate(self.players.items()):
             player_bg = pygame.Surface((250, 35), pygame.SRCALPHA)
@@ -839,10 +806,8 @@ class MemoryCardGame:
             self.screen.blit(player_text, player_rect)
             y_offset += 45
         
-        # Status messages with animation
         status_y = 420
         if len(self.players) < 2:
-            # Pulsing waiting message
             pulse = 0.8 + 0.2 * math.sin(self.bg_time * 4)
             waiting_color = (int(200 * pulse), int(200 * pulse), int(200 * pulse))
             
@@ -860,7 +825,6 @@ class MemoryCardGame:
             self.screen.blit(instruction, instruction_rect)
     
     def draw_game(self):
-        # Dynamic game background
         bg_r = int(20 + 10 * math.sin(self.bg_time * 0.2))
         bg_g = int(40 + 15 * math.sin(self.bg_time * 0.3))
         bg_b = int(20 + 10 * math.sin(self.bg_time * 0.25))
@@ -868,13 +832,11 @@ class MemoryCardGame:
         
         self.back_btn.draw(self.screen, self.font_small)
         
-        # Enhanced game title
         title = self.font_medium.render("Memory Card Game", True, (255, 255, 255))
         title_glow = self.font_medium.render("Memory Card Game", True, (100, 200, 255))
         self.screen.blit(title_glow, (self.width // 2 - 98, 22))
         self.screen.blit(title, (self.width // 2 - 100, 20))
         
-        # Show level with enhanced styling
         if hasattr(self, 'game_state_data') and self.game_state_data:
             level = self.game_state_data.get('level', 'normal')
             level_bg = pygame.Surface((120, 25), pygame.SRCALPHA)
@@ -884,22 +846,19 @@ class MemoryCardGame:
             level_text = self.font_small.render(f"Level: {level.title()}", True, (200, 200, 255))
             self.screen.blit(level_text, (750, 27))
         
-        # Enhanced player scores with backgrounds
         x_offset = 50
         for player_id, player_data in self.players.items():
             name = player_data['name']
             score = player_data['score']
             is_turn = player_data['is_turn']
             
-            if player_id == self.player_id:
+            if player_id == self.client.player_id:
                 name += " (You)"
             
-            # Score background with turn indicator
             score_width = 180
             score_bg = pygame.Surface((score_width, 35), pygame.SRCALPHA)
             
             if is_turn:
-                # Animated turn indicator
                 turn_pulse = 0.7 + 0.3 * math.sin(self.bg_time * 6)
                 bg_color = (int(255 * turn_pulse), int(255 * turn_pulse), 100, 150)
                 border_color = (255, 255, 100)
@@ -916,20 +875,17 @@ class MemoryCardGame:
             self.screen.blit(score_text, (x_offset + 10, 70))
             x_offset += 200
         
-        # Enhanced current turn indicator
         if self.current_player:
             current_name = self.players.get(self.current_player, {}).get('name', 'Unknown')
-            if self.current_player == self.player_id:
+            if self.current_player == self.client.player_id:
                 turn_text = "Your turn!"
                 color = (100, 255, 100)
-                # Add pulsing effect for current player
                 pulse = 0.8 + 0.2 * math.sin(self.bg_time * 5)
                 color = (int(100 * pulse), int(255 * pulse), int(100 * pulse))
             else:
                 turn_text = f" {current_name}'s turn"
                 color = (255, 100, 100)
             
-            # Turn indicator background
             turn_bg = pygame.Surface((250, 30), pygame.SRCALPHA)
             pygame.draw.rect(turn_bg, (0, 0, 0, 120), (0, 0, 250, 30), border_radius=10)
             pygame.draw.rect(turn_bg, color + (150,), (0, 0, 250, 30), 2, border_radius=10)
@@ -939,7 +895,6 @@ class MemoryCardGame:
             turn_rect = turn_surface.get_rect(center=(self.width // 2, 120))
             self.screen.blit(turn_surface, turn_rect)
         
-        # Draw cards with enhanced effects
         for card in self.cards:
             card.draw(self.screen)
     
@@ -948,29 +903,25 @@ class MemoryCardGame:
         
         self.back_btn.draw(self.screen, self.font_small)
         
-        # Animated victory title
         victory_scale = 1.0 + 0.15 * math.sin(self.bg_time * 2)
         victory_font = pygame.font.Font(None, int(48 * victory_scale))
         title = victory_font.render("🎉 Game Finished! 🎉", True, (255, 255, 100))
         title_rect = title.get_rect(center=(self.width // 2, 150))
         
-        # Title glow effect
         title_glow = victory_font.render("🎉 Game Finished! 🎉", True, (255, 200, 0))
         glow_rect = title_glow.get_rect(center=(self.width // 2 + 3, 153))
         self.screen.blit(title_glow, glow_rect)
         self.screen.blit(title, title_rect)
         
-        # Enhanced results display
         y_offset = 250
         scores = [(pid, data['score']) for pid, data in self.players.items()]
         scores.sort(key=lambda x: x[1], reverse=True)
         
         for i, (player_id, score) in enumerate(scores):
             name = self.players[player_id]['name']
-            if player_id == self.player_id:
+            if player_id == self.client.player_id:
                 name += " (You)"
             
-            # Result background with rank-based styling
             result_width = 400
             result_bg = pygame.Surface((result_width, 50), pygame.SRCALPHA)
             
@@ -1014,7 +965,6 @@ class MemoryCardGame:
     
     def draw_status(self):
         if self.status_message and self.status_timer > 0:
-            # Enhanced status message with animation
             status_alpha = min(255, self.status_timer // 10)
             status_scale = 1.0 + 0.1 * math.sin(self.bg_time * 6)
             
@@ -1022,20 +972,17 @@ class MemoryCardGame:
             status_surface = status_font.render(self.status_message, True, (255, 255, 100))
             status_rect = status_surface.get_rect(center=(self.width // 2, self.height - 50))
             
-            # Status background with glow
             bg_width = status_rect.width + 40
             bg_height = status_rect.height + 20
             bg_rect = pygame.Rect(status_rect.centerx - bg_width // 2, 
                                 status_rect.centery - bg_height // 2, 
                                 bg_width, bg_height)
             
-            # Outer glow
             glow_surface = pygame.Surface((bg_width + 20, bg_height + 20), pygame.SRCALPHA)
             pygame.draw.rect(glow_surface, (255, 255, 100, 50), 
                            (0, 0, bg_width + 20, bg_height + 20), border_radius=15)
             self.screen.blit(glow_surface, (bg_rect.x - 10, bg_rect.y - 10))
             
-            # Main background
             pygame.draw.rect(self.screen, (50, 50, 50, 200), bg_rect, border_radius=10)
             pygame.draw.rect(self.screen, (255, 255, 100), bg_rect, 2, border_radius=10)
             
@@ -1046,8 +993,8 @@ class MemoryCardGame:
         while self.running:
             self.handle_events()
             
-            if self.client.connected:
-                self.handle_server_messages()
+            if self.client.player_id and self.state in [GameState.WAITING, GameState.PLAYING]:
+                self.update_game_state()
             
             if self.state == GameState.MENU:
                 self.draw_menu()
@@ -1065,7 +1012,6 @@ class MemoryCardGame:
             pygame.display.flip()
             self.clock.tick(60)
         
-        self.client.disconnect()
         pygame.quit()
         sys.exit()
 
@@ -1073,5 +1019,3 @@ class MemoryCardGame:
 if __name__ == "__main__":
     game = MemoryCardGame()
     game.run()
-    
-    

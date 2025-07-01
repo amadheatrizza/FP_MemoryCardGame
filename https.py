@@ -1,15 +1,17 @@
-import os
-import sys
-import uuid
+# http.py
 import json
-import time
+import uuid
+import string
 import random
-import socket
+import time
 import threading
-from glob import glob
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class GameState(Enum):
     WAITING_FOR_PLAYERS = "waiting"
@@ -62,28 +64,28 @@ class GameSession:
         player_ids = list(self.players.keys())
         self.current_player_id = random.choice(player_ids)
         self.players[self.current_player_id].is_turn = True
+        logger.info(f"Game {self.room_id} started with players: {player_ids} at level: {self.level}")
 
         if self.level == "easy":
             for card in self.cards:
                 card.is_revealed = True
+
             def hide_all_cards():
                 time.sleep(3)
                 for card in self.cards:
                     if not card.is_matched:
                         card.is_revealed = False
+
             threading.Thread(target=hide_all_cards, daemon=True).start()
 
-    def reveal_card(self, player_id: str, card_id: int) -> Dict:
+    def reveal_card(self, card_id: int, player_id: str) -> Dict:
         if self.current_player_id != player_id or self.state != GameState.IN_PROGRESS:
             return {"success": False, "message": "Not your turn"}
 
-        if card_id >= len(self.cards):
-            return {"success": False, "message": "Invalid card index"}
+        if card_id >= len(self.cards) or self.cards[card_id].is_matched or self.cards[card_id].is_revealed:
+            return {"success": False, "message": "Invalid card selection"}
 
         card = self.cards[card_id]
-        if card.is_matched or card.is_revealed:
-            return {"success": False, "message": "Card already revealed or matched"}
-
         card.is_revealed = True
         self.revealed_cards.append(card)
 
@@ -104,49 +106,57 @@ class GameSession:
                 self.revealed_cards = []
                 self.switch_turn()
 
-                def hide_later():
-                    time.sleep(1)
+                def hide_cards_later():
+                    time.sleep(0.5)
                     for c in revealed_copy:
                         c.is_revealed = False
-                threading.Thread(target=hide_later, daemon=True).start()
+
+                threading.Thread(target=hide_cards_later, daemon=True).start()
 
             if all(card.is_matched for card in self.cards):
-                self.state = GameState.FINISHED
+                self.finish_game()
 
         self.last_activity = datetime.now()
         return result
 
     def switch_turn(self):
-        ids = list(self.players.keys())
-        idx = ids.index(self.current_player_id)
+        player_ids = list(self.players.keys())
+        current_index = player_ids.index(self.current_player_id)
+        next_index = (current_index + 1) % len(player_ids)
         self.players[self.current_player_id].is_turn = False
-        self.current_player_id = ids[(idx + 1) % len(ids)]
+        self.current_player_id = player_ids[next_index]
         self.players[self.current_player_id].is_turn = True
 
-    def to_dict(self) -> Dict:
+    def finish_game(self):
+        self.state = GameState.FINISHED
+        scores = [(pid, player.score) for pid, player in self.players.items()]
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores
+
+    def get_game_state(self) -> Dict:
         return {
             "room_id": self.room_id,
             "level": self.level,
             "state": self.state.value,
-            "current_player": self.current_player_id,
             "players": {
                 pid: {
-                    "name": p.name,
-                    "score": p.score,
-                    "is_turn": p.is_turn
-                } for pid, p in self.players.items()
+                    "name": player.name,
+                    "score": player.score,
+                    "is_turn": player.is_turn
+                } for pid, player in self.players.items()
             },
             "cards": [
                 {
-                    "id": c.id,
-                    "revealed": c.is_revealed or c.is_matched,
-                    "value": c.value if c.is_revealed or c.is_matched else None,
-                    "matched": c.is_matched
-                } for c in self.cards
-            ]
+                    "id": card.id,
+                    "revealed": card.is_revealed or card.is_matched,
+                    "value": card.value if (card.is_revealed or card.is_matched) else None,
+                    "matched": card.is_matched
+                } for card in self.cards
+            ],
+            "current_player": self.current_player_id
         }
 
-class HttpServer:
+class GameServer:
     def __init__(self):
         self.games: Dict[str, GameSession] = {}
         self.client_to_game: Dict[str, str] = {}
@@ -155,7 +165,7 @@ class HttpServer:
         if headers is None:
             headers = {}
         if not isinstance(body, bytes):
-            body = str(body).encode()
+            body = json.dumps(body).encode()
         tanggal = datetime.now().strftime('%a, %d %b %Y %H:%M:%S GMT')
         lines = [
             f"HTTP/1.1 {kode} {message}\r\n",
@@ -166,117 +176,119 @@ class HttpServer:
         ] + [f"{k}: {v}\r\n" for k, v in headers.items()] + ["\r\n"]
         return "".join(lines).encode() + body
 
-    def proses(self, raw_data):
-        head, _, body = raw_data.partition("\r\n\r\n")
-        lines = head.split("\r\n")
-        method, path, _ = lines[0].split()
-        headers = {}
-        for line in lines[1:]:
-            if ':' in line:
-                k, v = line.split(':', 1)
-                headers[k.lower()] = v.strip()
-        content_len = int(headers.get('content-length', 0))
-        while len(body) < content_len:
-            body += conn.recv(1024).decode()
-        if method == 'POST':
-            return self._handle_post(path, body)
-        return self._response(404, 'Not Found', 'Only POST supported')
-
-    def _handle_post(self, path, body):
+    def proses(self, raw_data, connection):
+        requests = raw_data.split("\r\n")
+        lines = requests[0]
+        j = lines.split(" ")
         try:
-            data = json.loads(body)
-        except:
-            return self._response(400, 'Bad Request', 'Invalid JSON')
+            method = j[0].upper().strip()
+            if method == 'POST':
+                path = j[1].strip()
+                body_start = False
+                body = ""
+                for line in requests:
+                    if body_start:
+                        body = line
+                        break
+                    if line == "":
+                        body_start = True
+                
+                return self._handle_post(path, body, connection)
+            else:
+                return self._response(400, 'Bad Request', {'error': 'Only POST method supported'})
+        except IndexError:
+            return self._response(400, 'Bad Request', {'error': 'Invalid request'})
 
-        action = data.get("action")
-        if action == "create_room":
-            level = data.get("level", "normal")
-            rid = self._create_room(level)
-            p = self._register_player(rid, data.get("player_name", ""))
-            return self._response(200, 'OK', json.dumps({
-                "success": True,
-                "room_id": rid,
-                "player_id": p.id,
-                "game_state": self.games[rid].to_dict()
-            }))
+    def _handle_post(self, path, body, connection):
+        try:
+            data = json.loads(body) if body else {}
+            
+            if path == '/create_room':
+                level = data.get('level', 'normal')
+                player_name = data.get('player_name', '')
+                room_id = self.create_room(level)
+                player_id = str(uuid.uuid4())
+                player = Player(player_id, player_name)
+                self.join_room(room_id, player)
+                return self._response(200, 'OK', {
+                    'success': True,
+                    'room_id': room_id,
+                    'player_id': player_id,
+                    'game_state': self.games[room_id].get_game_state()
+                })
+                
+            elif path == '/join_room':
+                room_id = data.get('room_id')
+                player_name = data.get('player_name', '')
+                if room_id in self.games:
+                    player_id = str(uuid.uuid4())
+                    player = Player(player_id, player_name)
+                    if self.join_room(room_id, player):
+                        return self._response(200, 'OK', {
+                            'success': True,
+                            'room_id': room_id,
+                            'player_id': player_id,
+                            'game_state': self.games[room_id].get_game_state()
+                        })
+                    else:
+                        return self._response(400, 'Bad Request', {'error': 'Room is full'})
+                else:
+                    return self._response(404, 'Not Found', {'error': 'Room not found'})
+                    
+            elif path == '/reveal_card':
+                player_id = data.get('player_id')
+                room_id = self.client_to_game.get(player_id)
+                if room_id and room_id in self.games:
+                    card_id = data.get('card_id')
+                    result = self.games[room_id].reveal_card(card_id, player_id)
+                    result['game_state'] = self.games[room_id].get_game_state()
+                    return self._response(200, 'OK', result)
+                else:
+                    return self._response(400, 'Bad Request', {'error': 'Not in a game'})
+                    
+            elif path == '/game_state':
+                player_id = data.get('player_id')
+                room_id = self.client_to_game.get(player_id)
+                if room_id and room_id in self.games:
+                    return self._response(200, 'OK', {
+                        'success': True,
+                        'game_state': self.games[room_id].get_game_state()
+                    })
+                else:
+                    return self._response(400, 'Bad Request', {'error': 'Not in a game'})
+                    
+            else:
+                return self._response(404, 'Not Found', {'error': 'Endpoint not found'})
+                
+        except json.JSONDecodeError:
+            return self._response(400, 'Bad Request', {'error': 'Invalid JSON'})
+        except Exception as e:
+            logger.error(f"Error handling request: {e}")
+            return self._response(500, 'Internal Server Error', {'error': str(e)})
 
-        elif action == "join_room":
-            rid = data.get("room_id")
-            if rid not in self.games:
-                return self._response(404, 'Not Found', 'Room not found')
-            p = self._register_player(rid, data.get("player_name", ""))
-            ok = self.games[rid].add_player(p)
-            if not ok:
-                return self._response(400, 'Bad Request', 'Room full')
-            return self._response(200, 'OK', json.dumps({
-                "success": True,
-                "room_id": rid,
-                "player_id": p.id,
-                "game_state": self.games[rid].to_dict()
-            }))
+    def create_room(self, level="normal") -> str:
+        room_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        self.games[room_id] = GameSession(room_id, level=level)
+        logger.info(f"Created room: {room_id} with level: {level}")
+        return room_id
 
-        elif action == "reveal_card":
-            pid = data.get("player_id")
-            cid = data.get("card_id")
-            if pid not in self.client_to_game:
-                return self._response(400, 'Bad Request', 'Unknown player')
-            rid = self.client_to_game[pid]
-            result = self.games[rid].reveal_card(pid, cid)
-            result["game_state"] = self.games[rid].to_dict()
-            return self._response(200, 'OK', json.dumps(result))
+    def join_room(self, room_id: str, player: Player) -> bool:
+        if room_id in self.games:
+            success = self.games[room_id].add_player(player)
+            if success:
+                self.client_to_game[player.id] = room_id
+                logger.info(f"Player {player.id} joined room {room_id}")
+            return success
+        return False
 
-        elif action == "get_game_state":
-            pid = data.get("player_id")
-            if pid not in self.client_to_game:
-                return self._response(400, 'Bad Request', 'Unknown player')
-            rid = self.client_to_game[pid]
-            return self._response(200, 'OK', json.dumps({
-                "success": True,
-                "game_state": self.games[rid].to_dict()
-            }))
-
-        return self._response(400, 'Bad Request', 'Unknown action')
-
-    def _create_room(self, level):
-        while True:
-            rid = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
-            if rid not in self.games:
-                break
-        self.games[rid] = GameSession(rid, level)
-        return rid
-
-    def _register_player(self, rid, name):
-        pid = str(uuid.uuid4())
-        player = Player(pid, name)
-        self.games[rid].add_player(player)
-        self.client_to_game[pid] = rid
-        return player
-
-if __name__ == "__main__":
-    srv = HttpServer()
-    host, port = '127.0.0.1', 8001
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((host, port))
-    sock.listen(5)
-    print(f"HTTP Memory Game running on {host}:{port}")
-
-    def handler(conn, addr):
-        data = b""
-        while b"\r\n\r\n" not in data:
-            data += conn.recv(1024)
-        head, _, body = data.partition(b"\r\n\r\n")
-        content_len = 0
-        for line in head.split(b"\r\n"):
-            if line.lower().startswith(b"content-length"):
-                content_len = int(line.split(b":")[1].strip())
-        while len(body) < content_len:
-            body += conn.recv(1024)
-        full_req = (head + b"\r\n\r\n" + body).decode()
-        resp = srv.proses(full_req)
-        conn.sendall(resp)
-        conn.close()
-
-    while True:
-        conn, addr = sock.accept()
-        threading.Thread(target=handler, args=(conn, addr), daemon=True).start()
+    def cleanup_client(self, player_id: str):
+        if player_id in self.client_to_game:
+            room_id = self.client_to_game[player_id]
+            if room_id in self.games:
+                game = self.games[room_id]
+                if player_id in game.players:
+                    del game.players[player_id]
+                    if len(game.players) == 0:
+                        del self.games[room_id]
+                        logger.info(f"Removed empty room: {room_id}")
+            del self.client_to_game[player_id]
