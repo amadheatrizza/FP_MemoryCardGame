@@ -328,7 +328,7 @@ class InputBox:
                            (cursor_x, cursor_y), (cursor_x, cursor_y + self.rect.height - 10), 2)
 
 class NetworkClient:
-    def __init__(self, host='localhost', port=8002):
+    def __init__(self, host='localhost', port=8888):
         self.host = host
         self.port = port
         self.player_id = None
