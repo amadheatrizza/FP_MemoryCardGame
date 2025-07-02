@@ -419,7 +419,7 @@ class NetworkClient:
                 response = self.get_game_state()
                 if response.get("success"):
                     self.game_state_data = response.get("game_state")
-                time.sleep(0.25)  # Poll every 0.25 second
+                time.sleep(0.5)  # Poll every 0.25 second
             except Exception as e:
                 logger.error(f"Polling error: {e}")
                 time.sleep(1)
