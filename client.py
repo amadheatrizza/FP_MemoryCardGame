@@ -408,7 +408,7 @@ class NetworkClient:
                 response = self.get_game_state()
                 if response.get("success"):
                     self.game_state_data = response.get("game_state")
-                time.sleep(0.5)
+                time.sleep(0.05)
             except Exception as e:
                 logger.error(f"Polling error: {e}")
                 time.sleep(1)

@@ -104,12 +104,13 @@ class GameSession:
                 result["continue_turn"] = False
                 revealed_copy = list(self.revealed_cards)
                 self.revealed_cards = []
-                self.switch_turn()
+                
 
                 def hide_cards_later():
-                    time.sleep(0.5)
+                    time.sleep(1.5)
                     for c in revealed_copy:
                         c.is_revealed = False
+                    self.switch_turn()
 
                 threading.Thread(target=hide_cards_later, daemon=True).start()
 
